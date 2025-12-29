@@ -1,14 +1,18 @@
-import { ThemeProvider } from './src/context/ThemeContext';
 import { Stack } from 'expo-router';
-import { GestureHandlerRootView } from 'react-native-gesture-handler'; // <-- AJOUTER CECI
+import { ThemeProvider } from '../src/context/ThemeContext';
+import { LanguageProvider } from '../src/context/LanguageContext';
 
 export default function RootLayout() {
   return (
-    // GestureHandlerRootView doit être tout en haut, avec style flex: 1
-    <GestureHandlerRootView style={{ flex: 1 }}> 
+    <LanguageProvider>
       <ThemeProvider>
-        <Stack screenOptions={{ headerShown: false }} />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="login" />
+          <Stack.Screen name="register" />
+          <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        </Stack>
       </ThemeProvider>
-    </GestureHandlerRootView>
+    </LanguageProvider>
   );
 }
