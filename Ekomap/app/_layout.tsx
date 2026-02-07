@@ -1,0 +1,21 @@
+import { Stack } from 'expo-router';
+import { ThemeProvider } from '../src/context/ThemeContext';
+import { LanguageProvider } from '../src/context/LanguageContext';
+import { AuthProvider } from '../src/context/AuthContext';
+
+export default function RootLayout() {
+  return (
+    <LanguageProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="login" />
+            <Stack.Screen name="register" />
+            <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          </Stack>
+        </AuthProvider>
+      </ThemeProvider>
+    </LanguageProvider>
+  );
+}
