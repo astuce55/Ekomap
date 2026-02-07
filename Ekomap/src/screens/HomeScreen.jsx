@@ -11,7 +11,9 @@ import {
   TextInput,
   Platform,
   ScrollView,
-  FlatList
+  FlatList,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -116,6 +118,7 @@ export default function HomeScreen() {
   const [routeInfo, setRouteInfo] = useState(null);
   const [travelMode, setTravelMode] = useState('driving');
   const [activeSearchField, setActiveSearchField] = useState('start');
+  const [isRoutePanelMinimized, setIsRoutePanelMinimized] = useState(false);
 
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
@@ -128,33 +131,63 @@ export default function HomeScreen() {
     { type: 'travaux', icon: 'construct', label: t('works'), color: '#FFD700', requiresPhoto: true },
   ];
 
-  // Modes de transport
+  // Modes de transport avec vitesses moyennes (km/h)
   const travelModes = [
-    { mode: 'driving', icon: 'car', label: 'Voiture', color: '#4285F4' },
-    { mode: 'walking', icon: 'walk', label: 'À pied', color: '#34A853' },
-    { mode: 'bicycling', icon: 'bicycle', label: 'Vélo', color: '#FBBC04' },
+    { mode: 'driving', icon: 'car', label: 'Voiture', color: '#4285F4', avgSpeed: 30 },
+    { mode: 'walking', icon: 'walk', label: 'À pied', color: '#34A853', avgSpeed: 5 },
+    { mode: 'bicycling', icon: 'bicycle', label: 'Vélo', color: '#FBBC04', avgSpeed: 15 },
   ];
 
-  // Style carte sombre
+  // Style carte sombre amélioré avec plus de détails visibles
   const darkMapStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
-    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
-    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
-    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#263c3f' }] },
-    { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#6b9a76' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212a37' }] },
-    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#9ca5b3' }] },
-    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#746855' }] },
-    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f2835' }] },
-    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#f3d19c' }] },
+    { elementType: 'geometry', stylers: [{ color: '#1a1a1a' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a1a' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#9e9e9e' }] },
+    
+    // Routes principales plus visibles
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2c2c2c' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212121' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#b0b0b0' }] },
+    
+    // Autoroutes
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3c3c3c' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#2c2c2c' }] },
+    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#f0d040' }] },
+    
+    // Routes artérielles
+    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#373737' }] },
+    { featureType: 'road.arterial', elementType: 'labels.text.fill', stylers: [{ color: '#c0c0c0' }] },
+    
+    // Localités et villes - PLUS VISIBLES
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#e0e0e0' }] },
+    { featureType: 'administrative.neighborhood', elementType: 'labels.text.fill', stylers: [{ color: '#c0c0c0' }] },
+    
+    // POI (Points d'intérêt) - Écoles, boutiques, etc. - BEAUCOUP PLUS VISIBLES
+    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#e0e0e0' }] },
+    { featureType: 'poi', elementType: 'labels.icon', stylers: [{ visibility: 'on' }, { saturation: 20 }, { lightness: 20 }] },
+    
+    // Écoles spécifiquement
+    { featureType: 'poi.school', elementType: 'geometry', stylers: [{ color: '#3a3a3a' }] },
+    { featureType: 'poi.school', elementType: 'labels.text.fill', stylers: [{ color: '#f0f0f0' }] },
+    { featureType: 'poi.school', elementType: 'labels.icon', stylers: [{ visibility: 'on' }] },
+    
+    // Commerces et boutiques
+    { featureType: 'poi.business', elementType: 'labels.text.fill', stylers: [{ color: '#e8e8e8' }] },
+    { featureType: 'poi.business', elementType: 'labels.icon', stylers: [{ visibility: 'on' }] },
+    
+    // Parcs
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#2a3a2a' }] },
+    { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#8bc34a' }] },
+    
+    // Transport
     { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f3948' }] },
-    { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#17263c' }] },
-    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#515c6d' }] },
-    { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#17263c' }] },
+    { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#d0d0d0' }] },
+    { featureType: 'transit.station', elementType: 'labels.icon', stylers: [{ visibility: 'on' }] },
+    
+    // Eau
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1b2a' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#6b9ab8' }] },
+    { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#0d1b2a' }] },
   ];
 
   // Permissions de localisation
@@ -329,8 +362,16 @@ export default function HomeScreen() {
         
         setRouteCoordinates(coordinates);
         
-        const distanceKm = (route.distance / 1000).toFixed(1);
-        const durationMin = Math.round(route.duration / 60);
+        // Calcul de la distance en km
+        const distanceKm = route.distance / 1000;
+        
+        // Récupération de la vitesse moyenne selon le mode de transport
+        const modeConfig = travelModes.find(m => m.mode === mode);
+        const avgSpeed = modeConfig ? modeConfig.avgSpeed : 30; // Vitesse par défaut 30 km/h
+        
+        // Calcul du temps en minutes basé sur la distance et la vitesse
+        // Temps = Distance / Vitesse (en heures) * 60 (pour avoir des minutes)
+        const durationMin = Math.round((distanceKm / avgSpeed) * 60);
         
         let durationText = '';
         if (durationMin < 60) {
@@ -342,10 +383,22 @@ export default function HomeScreen() {
         }
         
         setRouteInfo({
-          distance: `${distanceKm} km`,
+          distance: `${distanceKm.toFixed(1)} km`,
           duration: durationText,
           durationMinutes: durationMin,
         });
+
+        console.log('✅ Itinéraire calculé:', {
+          distance: `${distanceKm.toFixed(1)} km`,
+          speed: `${avgSpeed} km/h`,
+          duration: durationText
+        });
+
+        // Minimiser le panneau automatiquement après calcul
+        setTimeout(() => {
+          setIsRoutePanelMinimized(true);
+          Keyboard.dismiss();
+        }, 500);
 
         if (mapRef.current) {
           mapRef.current.fitToCoordinates(
@@ -354,7 +407,7 @@ export default function HomeScreen() {
               { latitude: end.latitude, longitude: end.longitude }
             ],
             {
-              edgePadding: { top: 150, right: 50, bottom: 250, left: 50 },
+              edgePadding: { top: 150, right: 50, bottom: 200, left: 50 },
               animated: true,
             }
           );
@@ -384,6 +437,7 @@ export default function HomeScreen() {
     setDestinationQuery('');
     setShowRouteMenu(false);
     setSearchResults([]);
+    setIsRoutePanelMinimized(false);
   };
 
   const openRouteMenu = (mode) => {
@@ -825,147 +879,215 @@ export default function HomeScreen() {
       )}
 
       {showRouteMenu && (
-        <View style={[styles.routeMenuContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.routeSearchCard, { backgroundColor: colors.card }]}>
-            <View style={styles.routeInputRow}>
-              <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
-              <TextInput
-                style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                placeholder="Point de départ"
-                placeholderTextColor={colors.subText}
-                value={searchQuery}
-                onChangeText={(text) => {
-                  setSearchQuery(text);
-                  setActiveSearchField('start');
-                  searchPlaces(text, 'start');
-                }}
-                onFocus={() => setActiveSearchField('start')}
-              />
-              {searchQuery !== '' && (
-                <TouchableOpacity onPress={() => {
-                  setSearchQuery('');
-                  setStartPoint(null);
-                  setRouteCoordinates([]);
-                }}>
-                  <Ionicons name="close-circle" size={20} color={colors.subText} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <TouchableOpacity 
-              style={styles.swapButton}
-              onPress={swapLocations}
-            >
-              <Ionicons name="swap-vertical" size={24} color={colors.subText} />
-            </TouchableOpacity>
-
-            <View style={styles.routeInputRow}>
-              <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
-              <TextInput
-                style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                placeholder="Destination"
-                placeholderTextColor={colors.subText}
-                value={destinationQuery}
-                onChangeText={(text) => {
-                  setDestinationQuery(text);
-                  setActiveSearchField('end');
-                  searchPlaces(text, 'end');
-                }}
-                onFocus={() => setActiveSearchField('end')}
-              />
-              {destinationQuery !== '' && (
-                <TouchableOpacity onPress={() => {
-                  setDestinationQuery('');
-                  setEndPoint(null);
-                  setRouteCoordinates([]);
-                }}>
-                  <Ionicons name="close-circle" size={20} color={colors.subText} />
-                </TouchableOpacity>
-              )}
-            </View>
-
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={[
+            styles.routeMenuContainer,
+            { 
+              backgroundColor: colors.background,
+              maxHeight: isRoutePanelMinimized && routeInfo ? '25%' : '70%',
+            }
+          ]}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          {/* Barre de défilement pour minimiser/maximiser */}
+          {routeInfo && (
             <TouchableOpacity
-              style={styles.myLocationButton}
-              onPress={() => useMyLocation(activeSearchField)}
+              style={styles.routePanelHandle}
+              onPress={() => setIsRoutePanelMinimized(!isRoutePanelMinimized)}
             >
-              <Ionicons name="locate" size={20} color={colors.accent} />
-              <Text style={[styles.myLocationButtonText, { color: colors.accent }]}>
-                Utiliser ma position
-              </Text>
+              <View style={[styles.routePanelHandleBar, { backgroundColor: colors.subText }]} />
             </TouchableOpacity>
-          </View>
+          )}
 
-          {searchResults.length > 0 && (
-            <View style={[styles.searchResultsContainer, { backgroundColor: colors.card }]}>
-              <FlatList
-                data={searchResults}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={[styles.searchResultItem, { borderBottomColor: dark ? '#333' : '#EEE' }]}
-                    onPress={() => selectPlace(item, activeSearchField)}
-                  >
-                    <Ionicons name="location" size={20} color={colors.subText} />
-                    <View style={styles.searchResultContent}>
-                      <Text style={[styles.searchResultName, { color: colors.text }]}>
-                        {item.shortName}
+          <ScrollView 
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={!isRoutePanelMinimized}
+          >
+            {/* Affichage compact quand minimisé */}
+            {isRoutePanelMinimized && routeInfo ? (
+              <TouchableOpacity
+                style={[styles.minimizedRouteInfo, { backgroundColor: colors.card }]}
+                onPress={() => setIsRoutePanelMinimized(false)}
+              >
+                <View style={styles.minimizedRouteRow}>
+                  <View style={styles.minimizedRoutePoints}>
+                    <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
+                    <View style={styles.minimizedRouteLine} />
+                    <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
+                  </View>
+                  <View style={styles.minimizedRouteDetails}>
+                    <Text style={[styles.minimizedRouteText, { color: colors.text }]} numberOfLines={1}>
+                      {searchQuery} -- {destinationQuery}
+                    </Text>
+                    <View style={styles.minimizedRouteStats}>
+                      <Text style={[styles.minimizedRouteStatText, { color: colors.accent }]}>
+                        {routeInfo.duration}
                       </Text>
-                      <Text style={[styles.searchResultAddress, { color: colors.subText }]} numberOfLines={1}>
-                        {item.address}
+                      <Text style={[styles.minimizedRouteStatText, { color: colors.subText }]}> • </Text>
+                      <Text style={[styles.minimizedRouteStatText, { color: colors.accent }]}>
+                        {routeInfo.distance}
                       </Text>
                     </View>
+                  </View>
+                  <Ionicons name="chevron-up" size={24} color={colors.subText} />
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <>
+                <View style={[styles.routeSearchCard, { backgroundColor: colors.card }]}>
+                  <View style={styles.routeInputRow}>
+                    <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
+                    <TextInput
+                      style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
+                      placeholder="Point de départ"
+                      placeholderTextColor={colors.subText}
+                      value={searchQuery}
+                      onChangeText={(text) => {
+                        setSearchQuery(text);
+                        setActiveSearchField('start');
+                        searchPlaces(text, 'start');
+                        setIsRoutePanelMinimized(false);
+                      }}
+                      onFocus={() => {
+                        setActiveSearchField('start');
+                        setIsRoutePanelMinimized(false);
+                      }}
+                    />
+                    {searchQuery !== '' && (
+                      <TouchableOpacity onPress={() => {
+                        setSearchQuery('');
+                        setStartPoint(null);
+                        setRouteCoordinates([]);
+                      }}>
+                        <Ionicons name="close-circle" size={20} color={colors.subText} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <TouchableOpacity 
+                    style={styles.swapButton}
+                    onPress={swapLocations}
+                  >
+                    <Ionicons name="swap-vertical" size={24} color={colors.subText} />
                   </TouchableOpacity>
+
+                  <View style={styles.routeInputRow}>
+                    <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
+                    <TextInput
+                      style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
+                      placeholder="Destination"
+                      placeholderTextColor={colors.subText}
+                      value={destinationQuery}
+                      onChangeText={(text) => {
+                        setDestinationQuery(text);
+                        setActiveSearchField('end');
+                        searchPlaces(text, 'end');
+                        setIsRoutePanelMinimized(false);
+                      }}
+                      onFocus={() => {
+                        setActiveSearchField('end');
+                        setIsRoutePanelMinimized(false);
+                      }}
+                    />
+                    {destinationQuery !== '' && (
+                      <TouchableOpacity onPress={() => {
+                        setDestinationQuery('');
+                        setEndPoint(null);
+                        setRouteCoordinates([]);
+                      }}>
+                        <Ionicons name="close-circle" size={20} color={colors.subText} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.myLocationButton}
+                    onPress={() => useMyLocation(activeSearchField)}
+                  >
+                    <Ionicons name="locate" size={20} color={colors.accent} />
+                    <Text style={[styles.myLocationButtonText, { color: colors.accent }]}>
+                      Utiliser ma position
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {searchResults.length > 0 && (
+                  <View style={[styles.searchResultsContainer, { backgroundColor: colors.card }]}>
+                    <FlatList
+                      data={searchResults}
+                      keyExtractor={(item) => item.id.toString()}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          style={[styles.searchResultItem, { borderBottomColor: dark ? '#333' : '#EEE' }]}
+                          onPress={() => selectPlace(item, activeSearchField)}
+                        >
+                          <Ionicons name="location" size={20} color={colors.subText} />
+                          <View style={styles.searchResultContent}>
+                            <Text style={[styles.searchResultName, { color: colors.text }]}>
+                              {item.shortName}
+                            </Text>
+                            <Text style={[styles.searchResultAddress, { color: colors.subText }]} numberOfLines={1}>
+                              {item.address}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      )}
+                      scrollEnabled={false}
+                      nestedScrollEnabled
+                    />
+                  </View>
                 )}
-              />
-            </View>
-          )}
 
-          {routeCoordinates.length > 0 && (
-            <View style={[styles.travelModesContainer, { backgroundColor: colors.card }]}>
-              {travelModes.map((mode) => (
-                <TouchableOpacity
-                  key={mode.mode}
-                  style={[
-                    styles.travelModeBtn,
-                    travelMode === mode.mode && { backgroundColor: `${mode.color}20` }
-                  ]}
-                  onPress={() => changeTravelMode(mode.mode)}
-                >
-                  <Ionicons
-                    name={mode.icon}
-                    size={24}
-                    color={travelMode === mode.mode ? mode.color : colors.subText}
-                  />
-                  <Text style={[
-                    styles.travelModeText,
-                    { color: travelMode === mode.mode ? mode.color : colors.subText }
-                  ]}>
-                    {mode.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
+                {routeCoordinates.length > 0 && (
+                  <View style={[styles.travelModesContainer, { backgroundColor: colors.card }]}>
+                    {travelModes.map((mode) => (
+                      <TouchableOpacity
+                        key={mode.mode}
+                        style={[
+                          styles.travelModeBtn,
+                          travelMode === mode.mode && { backgroundColor: `${mode.color}20` }
+                        ]}
+                        onPress={() => changeTravelMode(mode.mode)}
+                      >
+                        <Ionicons
+                          name={mode.icon}
+                          size={24}
+                          color={travelMode === mode.mode ? mode.color : colors.subText}
+                        />
+                        <Text style={[
+                          styles.travelModeText,
+                          { color: travelMode === mode.mode ? mode.color : colors.subText }
+                        ]}>
+                          {mode.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
 
-          {routeInfo && (
-            <View style={[styles.routeInfoCard, { backgroundColor: colors.card }]}>
-              <View style={styles.routeInfoRow}>
-                <Ionicons name="time-outline" size={20} color={colors.accent} />
-                <Text style={[styles.routeInfoText, { color: colors.text }]}>
-                  {routeInfo.duration}
-                </Text>
-              </View>
-              <View style={styles.routeInfoRow}>
-                <Ionicons name="navigate-outline" size={20} color={colors.accent} />
-                <Text style={[styles.routeInfoText, { color: colors.text }]}>
-                  {routeInfo.distance}
-                </Text>
-              </View>
-              {isSearching && (
-                <ActivityIndicator size="small" color={colors.accent} style={{ marginLeft: 10 }} />
-              )}
-            </View>
-          )}
+                {routeInfo && (
+                  <View style={[styles.routeInfoCard, { backgroundColor: colors.card }]}>
+                    <View style={styles.routeInfoRow}>
+                      <Ionicons name="time-outline" size={20} color={colors.accent} />
+                      <Text style={[styles.routeInfoText, { color: colors.text }]}>
+                        {routeInfo.duration}
+                      </Text>
+                    </View>
+                    <View style={styles.routeInfoRow}>
+                      <Ionicons name="navigate-outline" size={20} color={colors.accent} />
+                      <Text style={[styles.routeInfoText, { color: colors.text }]}>
+                        {routeInfo.distance}
+                      </Text>
+                    </View>
+                    {isSearching && (
+                      <ActivityIndicator size="small" color={colors.accent} style={{ marginLeft: 10 }} />
+                    )}
+                  </View>
+                )}
+              </>
+            )}
+          </ScrollView>
 
           <TouchableOpacity
             style={[styles.closeRouteBtn, { backgroundColor: colors.card }]}
@@ -973,7 +1095,7 @@ export default function HomeScreen() {
           >
             <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       <TouchableOpacity
@@ -1169,13 +1291,67 @@ const styles = StyleSheet.create({
   routeBtnText: { fontSize: 16, fontWeight: '600' },
   routeMenuContainer: {
     position: 'absolute',
-    top: 0,
+    bottom: 0,
     left: 0,
     right: 0,
-    paddingTop: 60,
-    paddingHorizontal: 20,
     paddingBottom: 20,
+    paddingHorizontal: 20,
+    paddingTop: 5,
     zIndex: 10,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  routePanelHandle: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  routePanelHandleBar: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.3,
+  },
+  minimizedRouteInfo: {
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 10,
+    elevation: 3,
+  },
+  minimizedRouteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  minimizedRoutePoints: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  minimizedRouteLine: {
+    width: 2,
+    height: 20,
+    backgroundColor: '#999',
+    marginVertical: 2,
+  },
+  minimizedRouteDetails: {
+    flex: 1,
+  },
+  minimizedRouteText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  minimizedRouteStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  minimizedRouteStatText: {
+    fontSize: 13,
+    fontWeight: 'bold',
   },
   routeSearchCard: {
     borderRadius: 15,
@@ -1263,6 +1439,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   routeMarker: {
     width: 32,
