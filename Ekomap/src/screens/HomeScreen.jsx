@@ -10,17 +10,19 @@ import {
   ActivityIndicator,
   TextInput,
   Platform,
-  ScrollView
+  ScrollView,
+  FlatList
 } from 'react-native';
-import MapView, { Marker, PROVIDER_DEFAULT, Callout } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { postIncident, getIncidents } from '../api/reports';
+import { postIncident, getIncidents, updateIncidentPosition } from '../api/reports';
 import { useRouter } from 'expo-router';
+import { BACKEND_IP } from '../api/client';
 
 export default function HomeScreen() {
   const { colors, dark } = useTheme();
@@ -40,20 +42,31 @@ export default function HomeScreen() {
   // États des incidents
   const [incidents, setIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
+  const [editingIncident, setEditingIncident] = useState(null);
 
   // États du signalement
   const [showReportMenu, setShowReportMenu] = useState(false);
   const [selectedIncidentType, setSelectedIncidentType] = useState(null);
-  const [markerPosition, setMarkerPosition] = useState(null);
   const [photoUri, setPhotoUri] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportStep, setReportStep] = useState('type');
 
-  // États de recherche et itinéraire
-  const [showSearch, setShowSearch] = useState(false);
+  // États de recherche et itinéraire (Style Google Maps)
+  const [showRouteMenu, setShowRouteMenu] = useState(false);
+  const [routeMode, setRouteMode] = useState(null); // 'from-here' ou 'to-here'
   const [searchQuery, setSearchQuery] = useState('');
+  const [destinationQuery, setDestinationQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [startPoint, setStartPoint] = useState(null);
+  const [endPoint, setEndPoint] = useState(null);
+  const [routeCoordinates, setRouteCoordinates] = useState([]);
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [travelMode, setTravelMode] = useState('driving'); // 'driving', 'walking', 'bicycling'
+  const [activeSearchField, setActiveSearchField] = useState('start'); // 'start' ou 'end'
 
   const mapRef = useRef(null);
+  const searchTimeout = useRef(null);
 
   // Types d'incidents disponibles
   const incidentTypes = [
@@ -63,7 +76,14 @@ export default function HomeScreen() {
     { type: 'travaux', icon: 'construct', label: t('works'), color: '#FFD700', requiresPhoto: true },
   ];
 
-  // Style de carte sombre adapté au thème
+  // Modes de transport
+  const travelModes = [
+    { mode: 'driving', icon: 'car', label: 'Voiture', color: '#4285F4' },
+    { mode: 'walking', icon: 'walk', label: 'À pied', color: '#34A853' },
+    { mode: 'bicycling', icon: 'bicycle', label: 'Vélo', color: '#FBBC04' },
+  ];
+
+  // Style de carte sombre
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
     { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
@@ -165,7 +185,7 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Charger les incidents au démarrage et après chaque signalement
+  // Charger les incidents
   useEffect(() => {
     loadIncidents();
   }, []);
@@ -193,6 +213,252 @@ export default function HomeScreen() {
     }
   };
 
+  // Fonction pour obtenir l'URL complète de l'image
+  const getImageUrl = (photoUrl) => {
+    if (!photoUrl) return null;
+    if (photoUrl.startsWith('http')) return photoUrl;
+    return `http://${BACKEND_IP}:3000${photoUrl}`;
+  };
+
+  // Recherche de lieux avec debounce (comme Google Maps)
+  const searchPlaces = async (query, field) => {
+    if (!query || query.length < 3) {
+      setSearchResults([]);
+      return;
+    }
+
+    // Clear previous timeout
+    if (searchTimeout.current) {
+      clearTimeout(searchTimeout.current);
+    }
+
+    // Set new timeout for debounce (300ms)
+    searchTimeout.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        // Utilisation de Nominatim avec recherche plus précise
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&countrycodes=cm&addressdetails=1`
+        );
+        const data = await response.json();
+        
+        const results = data.map(place => ({
+          id: place.place_id,
+          name: place.display_name,
+          shortName: place.name || place.display_name.split(',')[0],
+          address: place.display_name,
+          latitude: parseFloat(place.lat),
+          longitude: parseFloat(place.lon),
+          type: place.type,
+          class: place.class,
+        }));
+        
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Erreur lors de la recherche:', error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  };
+
+  // Sélectionner un lieu
+  const selectPlace = (place, field) => {
+    if (field === 'start') {
+      setStartPoint(place);
+      setSearchQuery(place.shortName);
+    } else {
+      setEndPoint(place);
+      setDestinationQuery(place.shortName);
+    }
+    
+    setSearchResults([]);
+    
+    // Si les deux points sont définis, calculer l'itinéraire
+    if ((field === 'start' && endPoint) || (field === 'end' && startPoint)) {
+      const start = field === 'start' ? place : startPoint;
+      const end = field === 'end' ? place : endPoint;
+      calculateRoute(start, end, travelMode);
+    }
+
+    // Centrer sur le lieu sélectionné
+    if (mapRef.current) {
+      mapRef.current.animateToRegion({
+        latitude: place.latitude,
+        longitude: place.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      });
+    }
+  };
+
+  // Utiliser ma position
+  const useMyLocation = (field) => {
+    if (!location) {
+      Alert.alert('Erreur', 'Position non disponible');
+      return;
+    }
+
+    const myLocationPoint = {
+      id: 'my-location',
+      name: 'Ma position',
+      shortName: 'Ma position',
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+    };
+
+    if (field === 'start') {
+      setStartPoint(myLocationPoint);
+      setSearchQuery('Ma position');
+      if (endPoint) {
+        calculateRoute(myLocationPoint, endPoint, travelMode);
+      }
+    } else {
+      setEndPoint(myLocationPoint);
+      setDestinationQuery('Ma position');
+      if (startPoint) {
+        calculateRoute(startPoint, myLocationPoint, travelMode);
+      }
+    }
+  };
+
+  // Inverser départ et arrivée
+  const swapLocations = () => {
+    const tempPoint = startPoint;
+    const tempQuery = searchQuery;
+    
+    setStartPoint(endPoint);
+    setSearchQuery(destinationQuery);
+    
+    setEndPoint(tempPoint);
+    setDestinationQuery(tempQuery);
+
+    if (startPoint && endPoint) {
+      calculateRoute(endPoint, tempPoint, travelMode);
+    }
+  };
+
+  // Calculer l'itinéraire avec différents modes de transport
+  const calculateRoute = async (start, end, mode) => {
+    try {
+      setIsSearching(true);
+      
+      // Choisir le profil selon le mode de transport
+      let profile = 'driving'; // Par défaut
+      if (mode === 'walking') profile = 'foot';
+      if (mode === 'bicycling') profile = 'bike';
+      
+      // Utilisation d'OSRM avec le bon profil
+      const response = await fetch(
+        `https://router.project-osrm.org/route/v1/${profile === 'driving' ? 'car' : profile}/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true`
+      );
+      const data = await response.json();
+
+      if (data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        const coordinates = route.geometry.coordinates.map(coord => ({
+          latitude: coord[1],
+          longitude: coord[0],
+        }));
+        
+        setRouteCoordinates(coordinates);
+        
+        // Calculer les informations de temps et distance
+        const distanceKm = (route.distance / 1000).toFixed(1);
+        const durationMin = Math.round(route.duration / 60);
+        
+        // Formatter la durée
+        let durationText = '';
+        if (durationMin < 60) {
+          durationText = `${durationMin} min`;
+        } else {
+          const hours = Math.floor(durationMin / 60);
+          const mins = durationMin % 60;
+          durationText = mins > 0 ? `${hours}h ${mins}min` : `${hours}h`;
+        }
+        
+        setRouteInfo({
+          distance: `${distanceKm} km`,
+          duration: durationText,
+          durationMinutes: durationMin,
+        });
+
+        // Ajuster la vue de la carte pour montrer tout l'itinéraire
+        if (mapRef.current) {
+          mapRef.current.fitToCoordinates(
+            [
+              { latitude: start.latitude, longitude: start.longitude },
+              { latitude: end.latitude, longitude: end.longitude }
+            ],
+            {
+              edgePadding: { top: 150, right: 50, bottom: 250, left: 50 },
+              animated: true,
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Erreur lors du calcul de l\'itinéraire:', error);
+      Alert.alert('Erreur', 'Impossible de calculer l\'itinéraire');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Changer le mode de transport
+  const changeTravelMode = (mode) => {
+    setTravelMode(mode);
+    if (startPoint && endPoint) {
+      calculateRoute(startPoint, endPoint, mode);
+    }
+  };
+
+  // Effacer l'itinéraire
+  const clearRoute = () => {
+    setRouteCoordinates([]);
+    setStartPoint(null);
+    setEndPoint(null);
+    setRouteInfo(null);
+    setSearchQuery('');
+    setDestinationQuery('');
+    setShowRouteMenu(false);
+  };
+
+  // Ouvrir le menu d'itinéraire (style Google Maps)
+  const openRouteMenu = (mode) => {
+    setRouteMode(mode);
+    
+    if (mode === 'from-here' && location) {
+      // Itinéraire depuis ma position
+      const myLocationPoint = {
+        id: 'my-location',
+        name: 'Ma position',
+        shortName: 'Ma position',
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+      setStartPoint(myLocationPoint);
+      setSearchQuery('Ma position');
+      setActiveSearchField('end');
+    } else if (mode === 'to-here' && location) {
+      // Itinéraire vers ma position
+      const myLocationPoint = {
+        id: 'my-location',
+        name: 'Ma position',
+        shortName: 'Ma position',
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+      setEndPoint(myLocationPoint);
+      setDestinationQuery('Ma position');
+      setActiveSearchField('start');
+    } else {
+      setActiveSearchField('start');
+    }
+    
+    setShowRouteMenu(true);
+  };
+
   // Démarrer un nouveau signalement
   const startReport = () => {
     if (isGuest || user) {
@@ -213,20 +479,7 @@ export default function HomeScreen() {
   // Sélectionner le type d'incident
   const selectIncidentType = (incident) => {
     setSelectedIncidentType(incident);
-    // Initialiser la position du marqueur à la position de l'utilisateur
-    if (location) {
-      setMarkerPosition({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
-    }
-    setReportStep('position');
-  };
-
-  // Confirmer la position
-  const confirmPosition = () => {
-    // Si le type ne nécessite pas de photo (controle), on passe à la confirmation
-    if (selectedIncidentType && !selectedIncidentType.requiresPhoto) {
+    if (!incident.requiresPhoto) {
       setReportStep('confirm');
     } else {
       setReportStep('photo');
@@ -276,13 +529,11 @@ export default function HomeScreen() {
 
   // Soumettre le signalement
   const submitReport = async () => {
-    // Vérifier les conditions selon le type
-    if (!selectedIncidentType || !markerPosition) {
+    if (!selectedIncidentType || !location) {
       Alert.alert('Erreur', 'Veuillez compléter toutes les étapes');
       return;
     }
 
-    // Si le type nécessite une photo, vérifier qu'elle est présente
     if (selectedIncidentType.requiresPhoto && !photoUri) {
       Alert.alert('Erreur', 'Une photo est requise pour ce type de signalement');
       return;
@@ -293,8 +544,8 @@ export default function HomeScreen() {
     try {
       const incidentData = {
         type: selectedIncidentType.type,
-        lat: markerPosition.latitude,
-        lng: markerPosition.longitude,
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
         photoUri: photoUri || null,
         reported_at: new Date().toISOString(),
         user_id: user?.id,
@@ -311,7 +562,7 @@ export default function HomeScreen() {
             text: 'OK', 
             onPress: () => {
               closeReportModal();
-              loadIncidents(); // Recharger les incidents
+              loadIncidents();
             }
           }]
         );
@@ -329,130 +580,479 @@ export default function HomeScreen() {
   const closeReportModal = () => {
     setShowReportMenu(false);
     setSelectedIncidentType(null);
-    setMarkerPosition(null);
     setPhotoUri(null);
     setReportStep('type');
   };
 
-  // Annuler le signalement à n'importe quelle étape
-  const cancelReport = () => {
-    Alert.alert(
-      'Annuler le signalement',
-      'Voulez-vous vraiment annuler ? Toutes les informations seront perdues.',
-      [
-        { text: 'Non', style: 'cancel' },
-        { text: 'Oui, annuler', style: 'destructive', onPress: closeReportModal }
-      ]
-    );
+  // Activer le mode édition
+  const enableEditMode = (incident) => {
+    if (!user && !isGuest) {
+      Alert.alert('Erreur', 'Vous devez être connecté pour modifier un incident');
+      return;
+    }
+
+    if (user && incident.user_id !== user.id) {
+      Alert.alert('Erreur', 'Vous ne pouvez modifier que vos propres incidents');
+      return;
+    }
+
+    setEditingIncident(incident);
+    setSelectedIncident(null);
   };
 
-  // Revenir à l'étape précédente
-  const goBackStep = () => {
-    if (reportStep === 'confirm') {
-      if (selectedIncidentType && !selectedIncidentType.requiresPhoto) {
-        setReportStep('position');
+  // Sauvegarder la nouvelle position
+  const saveNewPosition = async () => {
+    if (!editingIncident) return;
+
+    try {
+      const response = await updateIncidentPosition(
+        editingIncident._id,
+        editingIncident.coordinates.lat,
+        editingIncident.coordinates.lng
+      );
+
+      if (response.success) {
+        Alert.alert('Succès', 'La position a été mise à jour');
+        setEditingIncident(null);
+        loadIncidents();
       } else {
-        setReportStep('photo');
-        setPhotoUri(null);
+        Alert.alert('Erreur', 'Impossible de mettre à jour la position');
       }
-    } else if (reportStep === 'photo') {
-      setReportStep('position');
-    } else if (reportStep === 'position') {
-      setReportStep('type');
-      setMarkerPosition(null);
-      setSelectedIncidentType(null);
+    } catch (error) {
+      Alert.alert('Erreur', 'Une erreur est survenue');
     }
   };
 
-  // Obtenir l'icône du marqueur selon le type
-  const getMarkerIcon = (type) => {
-    const incident = incidentTypes.find(i => i.type === type);
-    return incident ? incident.icon : 'alert-circle';
+  // Annuler l'édition
+  const cancelEdit = () => {
+    setEditingIncident(null);
+    loadIncidents();
   };
 
-  // Obtenir la couleur du marqueur selon le type
-  const getMarkerColor = (type) => {
-    const incident = incidentTypes.find(i => i.type === type);
-    return incident ? incident.color : '#999999';
+  // Gérer le déplacement du marqueur
+  const handleMarkerDragEnd = (e, incident) => {
+    if (editingIncident && editingIncident._id === incident._id) {
+      const { latitude, longitude } = e.nativeEvent.coordinate;
+      setEditingIncident({
+        ...editingIncident,
+        coordinates: { lat: latitude, lng: longitude }
+      });
+    }
+  };
+
+  // Rendu du contenu de signalement
+  const renderReportContent = () => {
+    switch (reportStep) {
+      case 'type':
+        return (
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={[styles.instructionText, { color: colors.subText, marginBottom: 20 }]}>
+              Sélectionnez le type d'incident que vous souhaitez signaler :
+            </Text>
+            <View style={styles.incidentTypeGrid}>
+              {incidentTypes.map((incident) => (
+                <TouchableOpacity
+                  key={incident.type}
+                  style={[styles.incidentTypeCard, { backgroundColor: colors.card }]}
+                  onPress={() => selectIncidentType(incident)}
+                >
+                  <View style={[styles.incidentIcon, { backgroundColor: incident.color }]}>
+                    <Ionicons name={incident.icon} size={40} color="white" />
+                  </View>
+                  <Text style={[styles.incidentLabel, { color: colors.text }]}>
+                    {incident.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        );
+
+      case 'photo':
+        return (
+          <View style={styles.photoStep}>
+            <View style={[styles.instructionCard, { backgroundColor: colors.card }]}>
+              <Ionicons name="camera" size={24} color={colors.accent} />
+              <Text style={[styles.instructionText, { color: colors.text }]}>
+                Prenez une photo de l'incident pour aider la communauté
+              </Text>
+            </View>
+
+            <View style={styles.photoButtons}>
+              <TouchableOpacity
+                style={[styles.photoBtn, { backgroundColor: colors.card }]}
+                onPress={() => handleImagePicker('camera')}
+              >
+                <Ionicons name="camera" size={48} color={colors.accent} />
+                <Text style={[styles.photoBtnText, { color: colors.text }]}>
+                  Appareil photo
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.photoBtn, { backgroundColor: colors.card }]}
+                onPress={() => handleImagePicker('gallery')}
+              >
+                <Ionicons name="images" size={48} color={colors.accent} />
+                <Text style={[styles.photoBtnText, { color: colors.text }]}>
+                  Galerie
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+
+      case 'confirm':
+        return (
+          <ScrollView showsVerticalScrollIndicator={false} style={styles.confirmStep}>
+            {photoUri && (
+              <Image
+                source={{ uri: photoUri }}
+                style={styles.previewImage}
+                resizeMode="cover"
+              />
+            )}
+
+            <View style={[styles.detailCard, { backgroundColor: colors.card }]}>
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons
+                    name={selectedIncidentType?.icon}
+                    size={20}
+                    color={selectedIncidentType?.color}
+                  />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                    Type d'incident
+                  </Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {selectedIncidentType?.label}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="location" size={20} color={colors.accent} />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                    Position
+                  </Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {location?.coords.latitude.toFixed(4)}, {location?.coords.longitude.toFixed(4)}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.detailRow}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="time" size={20} color={colors.accent} />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                    Date et heure
+                  </Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {new Date().toLocaleString('fr-FR')}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.submitBtn,
+                { backgroundColor: colors.accent },
+                isSubmitting && styles.submitBtnDisabled
+              ]}
+              onPress={submitReport}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="black" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle" size={24} color="black" />
+                  <Text style={styles.submitBtnText}>Envoyer le signalement</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
+        );
+
+      default:
+        return null;
+    }
   };
 
   return (
     <View style={styles.container}>
-      {/* Carte OpenStreetMap - TOUJOURS INTERACTIVE */}
+      {/* Carte */}
       <MapView
         ref={mapRef}
-        provider={PROVIDER_DEFAULT}
         style={styles.map}
+        provider={PROVIDER_DEFAULT}
         initialRegion={region}
+        customMapStyle={dark ? darkMapStyle : []}
         showsUserLocation
         showsMyLocationButton={false}
-        showsPointsOfInterest={true}
-        showsBuildings={true}
-        mapType="standard"
-        customMapStyle={dark ? darkMapStyle : []}
-        // CARTE TOUJOURS INTERACTIVE - AUCUNE RESTRICTION
-        scrollEnabled={true}
-        zoomEnabled={true}
-        pitchEnabled={true}
-        rotateEnabled={true}
       >
-        {/* Marqueurs des incidents existants */}
-        {incidents.map((incident) => (
-          <Marker
-            key={incident.id || incident._id}
-            coordinate={{
-              latitude: incident.coordinates?.lat || incident.lat,
-              longitude: incident.coordinates?.lng || incident.lng,
-            }}
-            onPress={() => setSelectedIncident(incident)}
-          >
-            <View style={[styles.customMarker, { backgroundColor: getMarkerColor(incident.type) }]}>
-              <Ionicons name={getMarkerIcon(incident.type)} size={20} color="white" />
-            </View>
-          </Marker>
-        ))}
+        {/* Itinéraire */}
+        {routeCoordinates.length > 0 && (
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor={travelModes.find(m => m.mode === travelMode)?.color || colors.accent}
+            strokeWidth={5}
+          />
+        )}
 
-        {/* Marqueur de signalement en cours - TOUJOURS DRAGGABLE */}
-        {markerPosition && selectedIncidentType && reportStep === 'position' && (
+        {/* Marqueur de départ */}
+        {startPoint && (
           <Marker
-            coordinate={markerPosition}
-            draggable={true}
-            onDragEnd={(e) => setMarkerPosition(e.nativeEvent.coordinate)}
+            coordinate={{ latitude: startPoint.latitude, longitude: startPoint.longitude }}
+            pinColor="#34A853"
           >
-            <View style={[styles.customMarkerLarge, { backgroundColor: selectedIncidentType.color }]}>
-              <Ionicons name={selectedIncidentType.icon} size={28} color="white" />
+            <View style={[styles.routeMarker, { backgroundColor: '#34A853' }]}>
+              <Text style={styles.routeMarkerText}>A</Text>
             </View>
           </Marker>
         )}
+
+        {/* Marqueur d'arrivée */}
+        {endPoint && (
+          <Marker
+            coordinate={{ latitude: endPoint.latitude, longitude: endPoint.longitude }}
+            pinColor="#EA4335"
+          >
+            <View style={[styles.routeMarker, { backgroundColor: '#EA4335' }]}>
+              <Text style={styles.routeMarkerText}>B</Text>
+            </View>
+          </Marker>
+        )}
+
+        {/* Incidents sur la carte */}
+        {incidents.map((incident) => {
+          const incidentType = incidentTypes.find(t => t.type === incident.type);
+          const isEditing = editingIncident && editingIncident._id === incident._id;
+          
+          return (
+            <Marker
+              key={incident._id}
+              coordinate={{
+                latitude: isEditing ? editingIncident.coordinates.lat : incident.coordinates.lat,
+                longitude: isEditing ? editingIncident.coordinates.lng : incident.coordinates.lng,
+              }}
+              onPress={() => {
+                if (!isEditing) {
+                  setSelectedIncident(incident);
+                }
+              }}
+              draggable={isEditing}
+              onDragEnd={(e) => handleMarkerDragEnd(e, incident)}
+            >
+              <View
+                style={[
+                  isEditing ? styles.customMarkerLarge : styles.customMarker,
+                  { backgroundColor: incidentType?.color || '#666' },
+                  isEditing && { borderColor: colors.accent, borderWidth: 3 }
+                ]}
+              >
+                <Ionicons
+                  name={incidentType?.icon || 'alert-circle'}
+                  size={isEditing ? 28 : 22}
+                  color="white"
+                />
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
-      {/* Barre de recherche (masquée pour les invités) */}
-      {!isGuest && !showReportMenu && (
-        <View style={[styles.searchBar, { backgroundColor: colors.card }]}>
-          <Ionicons name="search" size={20} color={colors.subText} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder={t('whereTo')}
-            placeholderTextColor={colors.subText}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onFocus={() => setShowSearch(true)}
-          />
-        </View>
-      )}
-
-      {/* Bouton centrer sur ma position */}
-      {!showReportMenu && (
+      {/* Bouton Itinéraire (principal) */}
+      {!showRouteMenu && !editingIncident && (
         <TouchableOpacity
-          style={[styles.myLocationBtn, { backgroundColor: colors.card }]}
-          onPress={centerOnUser}
+          style={[styles.routeBtn, { backgroundColor: colors.card }]}
+          onPress={() => openRouteMenu(null)}
         >
-          <Ionicons name="locate" size={24} color={colors.accent} />
+          <Ionicons name="navigate" size={24} color={colors.accent} />
+          <Text style={[styles.routeBtnText, { color: colors.text }]}>Itinéraire</Text>
         </TouchableOpacity>
       )}
 
-      {/* Bouton de signalement (FAB) */}
-      {!showReportMenu && (
+      {/* Menu d'itinéraire (Style Google Maps) */}
+      {showRouteMenu && (
+        <View style={[styles.routeMenuContainer, { backgroundColor: colors.background }]}>
+          {/* Champs de recherche */}
+          <View style={[styles.routeSearchCard, { backgroundColor: colors.card }]}>
+            {/* Départ */}
+            <View style={styles.routeInputRow}>
+              <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
+              <TextInput
+                style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
+                placeholder="Choisir le point de départ"
+                placeholderTextColor={colors.subText}
+                value={searchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  setActiveSearchField('start');
+                  searchPlaces(text, 'start');
+                }}
+                onFocus={() => setActiveSearchField('start')}
+              />
+              {searchQuery !== '' && (
+                <TouchableOpacity onPress={() => {
+                  setSearchQuery('');
+                  setStartPoint(null);
+                  setRouteCoordinates([]);
+                }}>
+                  <Ionicons name="close-circle" size={20} color={colors.subText} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Bouton inverser */}
+            <TouchableOpacity 
+              style={styles.swapButton}
+              onPress={swapLocations}
+            >
+              <Ionicons name="swap-vertical" size={24} color={colors.subText} />
+            </TouchableOpacity>
+
+            {/* Arrivée */}
+            <View style={styles.routeInputRow}>
+              <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
+              <TextInput
+                style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
+                placeholder="Choisir la destination"
+                placeholderTextColor={colors.subText}
+                value={destinationQuery}
+                onChangeText={(text) => {
+                  setDestinationQuery(text);
+                  setActiveSearchField('end');
+                  searchPlaces(text, 'end');
+                }}
+                onFocus={() => setActiveSearchField('end')}
+              />
+              {destinationQuery !== '' && (
+                <TouchableOpacity onPress={() => {
+                  setDestinationQuery('');
+                  setEndPoint(null);
+                  setRouteCoordinates([]);
+                }}>
+                  <Ionicons name="close-circle" size={20} color={colors.subText} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Bouton Ma position */}
+            <TouchableOpacity
+              style={styles.myLocationButton}
+              onPress={() => useMyLocation(activeSearchField)}
+            >
+              <Ionicons name="locate" size={20} color={colors.accent} />
+              <Text style={[styles.myLocationButtonText, { color: colors.accent }]}>
+                Utiliser ma position
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Résultats de recherche */}
+          {searchResults.length > 0 && (
+            <View style={[styles.searchResultsContainer, { backgroundColor: colors.card }]}>
+              <FlatList
+                data={searchResults}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.searchResultItem, { borderBottomColor: dark ? '#333' : '#EEE' }]}
+                    onPress={() => selectPlace(item, activeSearchField)}
+                  >
+                    <Ionicons name="location" size={20} color={colors.subText} />
+                    <View style={styles.searchResultContent}>
+                      <Text style={[styles.searchResultName, { color: colors.text }]}>
+                        {item.shortName}
+                      </Text>
+                      <Text style={[styles.searchResultAddress, { color: colors.subText }]} numberOfLines={1}>
+                        {item.address}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          )}
+
+          {/* Modes de transport */}
+          {routeCoordinates.length > 0 && (
+            <View style={[styles.travelModesContainer, { backgroundColor: colors.card }]}>
+              {travelModes.map((mode) => (
+                <TouchableOpacity
+                  key={mode.mode}
+                  style={[
+                    styles.travelModeBtn,
+                    travelMode === mode.mode && { backgroundColor: `${mode.color}20` }
+                  ]}
+                  onPress={() => changeTravelMode(mode.mode)}
+                >
+                  <Ionicons
+                    name={mode.icon}
+                    size={24}
+                    color={travelMode === mode.mode ? mode.color : colors.subText}
+                  />
+                  <Text style={[
+                    styles.travelModeText,
+                    { color: travelMode === mode.mode ? mode.color : colors.subText }
+                  ]}>
+                    {mode.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Informations de l'itinéraire */}
+          {routeInfo && (
+            <View style={[styles.routeInfoCard, { backgroundColor: colors.card }]}>
+              <View style={styles.routeInfoRow}>
+                <Ionicons name="time-outline" size={20} color={colors.accent} />
+                <Text style={[styles.routeInfoText, { color: colors.text }]}>
+                  {routeInfo.duration}
+                </Text>
+              </View>
+              <View style={styles.routeInfoRow}>
+                <Ionicons name="navigate-outline" size={20} color={colors.accent} />
+                <Text style={[styles.routeInfoText, { color: colors.text }]}>
+                  {routeInfo.distance}
+                </Text>
+              </View>
+              {isSearching && (
+                <ActivityIndicator size="small" color={colors.accent} style={{ marginLeft: 10 }} />
+              )}
+            </View>
+          )}
+
+          {/* Bouton fermer */}
+          <TouchableOpacity
+            style={[styles.closeRouteBtn, { backgroundColor: colors.card }]}
+            onPress={clearRoute}
+          >
+            <Ionicons name="close" size={24} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Bouton Ma position */}
+      <TouchableOpacity
+        style={[styles.myLocationBtn, { backgroundColor: colors.card }]}
+        onPress={centerOnUser}
+      >
+        <Ionicons name="locate" size={24} color={colors.accent} />
+      </TouchableOpacity>
+
+      {/* Bouton de signalement */}
+      {!editingIncident && (
         <TouchableOpacity
           style={[styles.fab, { backgroundColor: colors.accent }]}
           onPress={startReport}
@@ -461,15 +1061,62 @@ export default function HomeScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bouton paramètres */}
-      {!showReportMenu && (
-        <TouchableOpacity
-          style={[styles.settingsBtn, { backgroundColor: colors.card }]}
-          onPress={() => router.push('/settings')}
-        >
-          <Ionicons name="settings-outline" size={24} color={colors.text} />
-        </TouchableOpacity>
+      {/* Bouton Paramètres */}
+      <TouchableOpacity
+        style={[styles.settingsBtn, { backgroundColor: colors.card }]}
+        onPress={() => router.push('/settings')}
+      >
+        <Ionicons name="settings-outline" size={24} color={colors.text} />
+      </TouchableOpacity>
+
+      {/* Barre d'édition de position */}
+      {editingIncident && (
+        <View style={[styles.editBar, { backgroundColor: colors.card }]}>
+          <Text style={[styles.editBarText, { color: colors.text }]}>
+            Déplacez le marqueur à la bonne position
+          </Text>
+          <View style={styles.editBarButtons}>
+            <TouchableOpacity
+              style={[styles.editBarBtn, { backgroundColor: '#FF4444' }]}
+              onPress={cancelEdit}
+            >
+              <Text style={styles.editBarBtnText}>Annuler</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.editBarBtn, { backgroundColor: colors.accent }]}
+              onPress={saveNewPosition}
+            >
+              <Text style={styles.editBarBtnText}>Valider</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
+
+      {/* Modal de signalement */}
+      <Modal
+        visible={showReportMenu}
+        animationType="slide"
+        transparent
+        onRequestClose={closeReportModal}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={closeReportModal}>
+                <Ionicons name="arrow-back" size={28} color={colors.text} />
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {reportStep === 'type' && 'Nouveau signalement'}
+                {reportStep === 'photo' && 'Ajouter une photo'}
+                {reportStep === 'confirm' && 'Confirmation'}
+              </Text>
+              <View style={{ width: 28 }} />
+            </View>
+
+            {renderReportContent()}
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal de détails d'incident */}
       <Modal
@@ -479,302 +1126,93 @@ export default function HomeScreen() {
         onRequestClose={() => setSelectedIncident(null)}
       >
         <View style={styles.modalContainer}>
-          <TouchableOpacity 
-            style={{ flex: 1 }} 
-            activeOpacity={1} 
-            onPress={() => setSelectedIncident(null)}
-          />
           <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>
-                Détails du signalement
-              </Text>
               <TouchableOpacity onPress={() => setSelectedIncident(null)}>
                 <Ionicons name="close" size={28} color={colors.text} />
               </TouchableOpacity>
-            </View>
-
-            {selectedIncident && (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Photo si disponible */}
-                {selectedIncident.photo_url && (
-                  <Image
-                    source={{ uri: `http://192.168.1.100:3000${selectedIncident.photo_url}` }}
-                    style={styles.incidentDetailPhoto}
-                    resizeMode="cover"
-                  />
-                )}
-
-                {/* Informations */}
-                <View style={[styles.detailCard, { backgroundColor: colors.card }]}>
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconContainer}>
-                      <Ionicons name="information-circle" size={20} color={colors.accent} />
-                    </View>
-                    <View style={styles.detailContent}>
-                      <Text style={[styles.detailLabel, { color: colors.subText }]}>Type</Text>
-                      <Text style={[styles.detailValue, { color: colors.text }]}>
-                        {incidentTypes.find(i => i.type === selectedIncident.type)?.label || selectedIncident.type}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconContainer}>
-                      <Ionicons name="location" size={20} color={colors.accent} />
-                    </View>
-                    <View style={styles.detailContent}>
-                      <Text style={[styles.detailLabel, { color: colors.subText }]}>Position GPS</Text>
-                      <Text style={[styles.detailValue, { color: colors.text }]}>
-                        {selectedIncident.coordinates?.lat.toFixed(6) || selectedIncident.lat?.toFixed(6)},{' '}
-                        {selectedIncident.coordinates?.lng.toFixed(6) || selectedIncident.lng?.toFixed(6)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconContainer}>
-                      <Ionicons name="time" size={20} color={colors.accent} />
-                    </View>
-                    <View style={styles.detailContent}>
-                      <Text style={[styles.detailLabel, { color: colors.subText }]}>Date et heure</Text>
-                      <Text style={[styles.detailValue, { color: colors.text }]}>
-                        {new Date(selectedIncident.reported_at || selectedIncident.created_at).toLocaleString('fr-FR')}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <View style={styles.detailIconContainer}>
-                      <Ionicons 
-                        name={selectedIncident.status === 'verified' ? 'checkmark-circle' : 'time'} 
-                        size={20} 
-                        color={selectedIncident.status === 'verified' ? colors.accent : colors.subText} 
-                      />
-                    </View>
-                    <View style={styles.detailContent}>
-                      <Text style={[styles.detailLabel, { color: colors.subText }]}>Statut</Text>
-                      <Text style={[styles.detailValue, { 
-                        color: selectedIncident.status === 'verified' ? colors.accent : colors.subText 
-                      }]}>
-                        {selectedIncident.status === 'verified' ? 'Vérifié ✓' : 
-                         selectedIncident.status === 'pending' ? 'En attente de vérification' : 'Rejeté'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.closeDetailBtn, { backgroundColor: colors.accent }]}
-                  onPress={() => setSelectedIncident(null)}
-                >
-                  <Text style={styles.closeDetailBtnText}>Fermer</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal de signalement */}
-      <Modal
-        visible={showReportMenu}
-        animationType="slide"
-        transparent
-        onRequestClose={cancelReport}
-      >
-        <View style={reportStep === 'position' ? styles.modalContainerPosition : styles.modalContainer}>
-          {reportStep === 'position' && (
-            <TouchableOpacity 
-              style={{ flex: 1 }} 
-              activeOpacity={1}
-            />
-          )}
-          
-          <View style={[
-            reportStep === 'position' ? styles.modalContentPosition : styles.modalContent,
-            { backgroundColor: colors.background }
-          ]}>
-            {/* En-tête avec bouton annuler */}
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={reportStep === 'type' ? cancelReport : goBackStep}>
-                <Ionicons 
-                  name={reportStep === 'type' ? "close" : "arrow-back"} 
-                  size={28} 
-                  color={colors.text} 
-                />
-              </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {reportStep === 'type' && t('reportIncident')}
-                {reportStep === 'position' && 'Positionner le marqueur'}
-                {reportStep === 'photo' && 'Ajouter une photo'}
-                {reportStep === 'confirm' && 'Confirmer'}
+                Détails de l'incident
               </Text>
-              {/* Bouton ANNULER toujours visible */}
-              <TouchableOpacity onPress={cancelReport}>
-                <Text style={[styles.cancelText, { color: '#FF4444' }]}>Annuler</Text>
-              </TouchableOpacity>
+              <View style={{ width: 28 }} />
             </View>
 
-            {/* Étape 1: Sélection du type */}
-            {reportStep === 'type' && (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.incidentTypeGrid}>
-                  {incidentTypes.map((incident) => (
-                    <TouchableOpacity
-                      key={incident.type}
-                      style={[styles.incidentTypeCard, { backgroundColor: incident.color }]}
-                      onPress={() => selectIncidentType(incident)}
-                      activeOpacity={0.8}
-                    >
-                      <View style={[styles.incidentIcon, { backgroundColor: 'rgba(255,255,255,0.3)' }]}>
-                        <Ionicons name={incident.icon} size={40} color="white" />
-                      </View>
-                      <Text style={[styles.incidentLabel, { color: 'white' }]}>
-                        {incident.label}
-                      </Text>
-                      {!incident.requiresPhoto && (
-                        <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 11, marginTop: 4, fontWeight: '600' }}>
-                          ⚡ Sans photo
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-            )}
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {selectedIncident?.photo_url && (
+                <Image
+                  source={{ uri: getImageUrl(selectedIncident.photo_url) }}
+                  style={styles.incidentDetailPhoto}
+                  resizeMode="cover"
+                />
+              )}
 
-            {/* Étape 2: Positionnement */}
-            {reportStep === 'position' && (
-              <View style={styles.positionStepCompact}>
-                <View style={[styles.instructionCardCompact, { backgroundColor: colors.card }]}>
-                  <Ionicons name="hand-left" size={24} color={colors.accent} />
-                  <Text style={[styles.instructionTextCompact, { color: colors.text }]}>
-                    Déplacez la carte ou glissez le marqueur à l'emplacement exact
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.confirmBtnLarge, { backgroundColor: colors.accent }]}
-                  onPress={confirmPosition}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="checkmark-circle" size={24} color="black" />
-                  <Text style={styles.confirmBtnText}>Confirmer la position</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Étape 3: Photo (sauf pour controle) */}
-            {reportStep === 'photo' && (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.photoStep}>
-                  <View style={[styles.instructionCard, { backgroundColor: colors.card }]}>
-                    <Ionicons name="camera" size={24} color={colors.accent} />
-                    <Text style={[styles.instructionText, { color: colors.text }]}>
-                      Prenez une photo claire de l'incident
+              <View style={[styles.detailCard, { backgroundColor: colors.card }]}>
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconContainer}>
+                    <Ionicons
+                      name={incidentTypes.find(t => t.type === selectedIncident?.type)?.icon || 'alert-circle'}
+                      size={20}
+                      color={incidentTypes.find(t => t.type === selectedIncident?.type)?.color || '#666'}
+                    />
+                  </View>
+                  <View style={styles.detailContent}>
+                    <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                      Type
+                    </Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>
+                      {incidentTypes.find(t => t.type === selectedIncident?.type)?.label || 'Inconnu'}
                     </Text>
                   </View>
+                </View>
 
-                  <View style={styles.photoButtons}>
-                    <TouchableOpacity
-                      style={[styles.photoBtn, { backgroundColor: colors.card, borderColor: colors.accent, borderWidth: 2 }]}
-                      onPress={() => handleImagePicker('camera')}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="camera" size={50} color={colors.accent} />
-                      <Text style={[styles.photoBtnText, { color: colors.text }]}>
-                        Appareil photo
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.photoBtn, { backgroundColor: colors.card, borderColor: colors.accent, borderWidth: 2 }]}
-                      onPress={() => handleImagePicker('gallery')}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="images" size={50} color={colors.accent} />
-                      <Text style={[styles.photoBtnText, { color: colors.text }]}>
-                        Galerie
-                      </Text>
-                    </TouchableOpacity>
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconContainer}>
+                    <Ionicons name="time" size={20} color={colors.accent} />
+                  </View>
+                  <View style={styles.detailContent}>
+                    <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                      Signalé le
+                    </Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>
+                      {selectedIncident && new Date(selectedIncident.reported_at).toLocaleString('fr-FR')}
+                    </Text>
                   </View>
                 </View>
-              </ScrollView>
-            )}
 
-            {/* Étape 4: Confirmation */}
-            {reportStep === 'confirm' && (
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.confirmStep}>
-                  {photoUri && (
-                    <Image
-                      source={{ uri: photoUri }}
-                      style={styles.previewImage}
-                      resizeMode="cover"
-                    />
-                  )}
-
-                  <View style={[styles.detailCard, { backgroundColor: colors.card }]}>
-                    <View style={styles.detailRow}>
-                      <View style={styles.detailIconContainer}>
-                        <Ionicons name="information-circle" size={20} color={colors.accent} />
-                      </View>
-                      <View style={styles.detailContent}>
-                        <Text style={[styles.detailLabel, { color: colors.subText }]}>Type</Text>
-                        <Text style={[styles.detailValue, { color: colors.text }]}>
-                          {selectedIncidentType?.label}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <View style={styles.detailIconContainer}>
-                        <Ionicons name="location" size={20} color={colors.accent} />
-                      </View>
-                      <View style={styles.detailContent}>
-                        <Text style={[styles.detailLabel, { color: colors.subText }]}>Position GPS</Text>
-                        <Text style={[styles.detailValue, { color: colors.text }]}>
-                          {markerPosition?.latitude.toFixed(6)}, {markerPosition?.longitude.toFixed(6)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <View style={styles.detailIconContainer}>
-                        <Ionicons name={photoUri ? "checkmark-circle" : "close-circle"} size={20} color={photoUri ? colors.accent : colors.subText} />
-                      </View>
-                      <View style={styles.detailContent}>
-                        <Text style={[styles.detailLabel, { color: colors.subText }]}>Photo</Text>
-                        <Text style={[styles.detailValue, { color: photoUri ? colors.accent : colors.subText }]}>
-                          {photoUri ? 'Ajoutée ✓' : selectedIncidentType?.requiresPhoto ? 'Non requise' : 'Aucune'}
-                        </Text>
-                      </View>
-                    </View>
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIconContainer}>
+                    <Ionicons name="location" size={20} color={colors.accent} />
                   </View>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.submitBtn,
-                      { backgroundColor: colors.accent },
-                      isSubmitting && styles.submitBtnDisabled
-                    ]}
-                    onPress={submitReport}
-                    disabled={isSubmitting}
-                    activeOpacity={0.8}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator color="black" size="small" />
-                    ) : (
-                      <>
-                        <Ionicons name="send" size={20} color="black" />
-                        <Text style={styles.submitBtnText}>Envoyer le signalement</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.detailContent}>
+                    <Text style={[styles.detailLabel, { color: colors.subText }]}>
+                      Coordonnées
+                    </Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>
+                      {selectedIncident?.coordinates.lat.toFixed(4)}, {selectedIncident?.coordinates.lng.toFixed(4)}
+                    </Text>
+                  </View>
                 </View>
-              </ScrollView>
-            )}
+              </View>
+
+              {(user?.id === selectedIncident?.user_id || isGuest) && (
+                <TouchableOpacity
+                  style={[styles.editPositionBtn, { backgroundColor: colors.accent }]}
+                  onPress={() => enableEditMode(selectedIncident)}
+                >
+                  <Ionicons name="move" size={20} color="black" />
+                  <Text style={styles.editPositionBtnText}>Modifier la position</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.closeDetailBtn, { backgroundColor: colors.card }]}
+                onPress={() => setSelectedIncident(null)}
+              >
+                <Text style={[styles.closeDetailBtnText, { color: colors.text }]}>
+                  Fermer
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -789,26 +1227,162 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  searchBar: {
+  routeBtn: {
     position: 'absolute',
     top: 60,
     left: 20,
-    right: 20,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
-    height: 50,
+    paddingVertical: 10,
     borderRadius: 25,
     elevation: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+    gap: 8,
   },
-  searchInput: {
-    flex: 1,
-    marginLeft: 10,
+  routeBtnText: {
     fontSize: 16,
+    fontWeight: '600',
+  },
+  routeMenuContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    zIndex: 10,
+  },
+  routeSearchCard: {
+    borderRadius: 15,
+    padding: 15,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  routeInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 10,
+  },
+  routeInputDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  routeInput: {
+    flex: 1,
+    height: 45,
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    fontSize: 16,
+  },
+  swapButton: {
+    alignSelf: 'flex-start',
+    marginLeft: 22,
+    marginVertical: 5,
+  },
+  myLocationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 8,
+  },
+  myLocationButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  searchResultsContainer: {
+    marginTop: 10,
+    borderRadius: 15,
+    maxHeight: 250,
+    elevation: 5,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 0.5,
+    gap: 12,
+  },
+  searchResultContent: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  searchResultAddress: {
+    fontSize: 13,
+  },
+  travelModesContainer: {
+    flexDirection: 'row',
+    marginTop: 10,
+    borderRadius: 15,
+    padding: 10,
+    elevation: 3,
+    gap: 10,
+  },
+  travelModeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  travelModeText: {
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  routeInfoCard: {
+    flexDirection: 'row',
+    marginTop: 10,
+    padding: 15,
+    borderRadius: 15,
+    elevation: 3,
+    gap: 20,
+  },
+  routeInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  routeInfoText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  closeRouteBtn: {
+    position: 'absolute',
+    top: 70,
+    right: 30,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+  },
+  routeMarker: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: 'white',
+  },
+  routeMarkerText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   myLocationBtn: {
     position: 'absolute',
@@ -855,15 +1429,40 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
+  editBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    elevation: 10,
+  },
+  editBarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+  editBarButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  editBarBtn: {
+    flex: 1,
+    height: 50,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editBarBtnText: {
+    color: 'black',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
   modalContainer: {
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContainerPosition: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
   modalContent: {
     borderTopLeftRadius: 25,
@@ -871,12 +1470,6 @@ const styles = StyleSheet.create({
     padding: 20,
     minHeight: '60%',
     maxHeight: '90%',
-  },
-  modalContentPosition: {
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    padding: 20,
-    maxHeight: '25%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -890,10 +1483,6 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     marginHorizontal: 10,
-  },
-  cancelText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
   incidentTypeGrid: {
     flexDirection: 'row',
@@ -927,17 +1516,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
-  positionStepCompact: {
-    gap: 15,
-  },
   instructionCard: {
-    flexDirection: 'row',
-    padding: 15,
-    borderRadius: 15,
-    gap: 12,
-    alignItems: 'center',
-  },
-  instructionCardCompact: {
     flexDirection: 'row',
     padding: 15,
     borderRadius: 15,
@@ -948,30 +1527,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 20,
-  },
-  instructionTextCompact: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  confirmBtnLarge: {
-    height: 55,
-    borderRadius: 15,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  confirmBtnText: {
-    color: 'black',
-    fontSize: 17,
-    fontWeight: 'bold',
   },
   photoStep: {
     flex: 1,
@@ -1090,6 +1645,20 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     marginBottom: 15,
   },
+  editPositionBtn: {
+    height: 50,
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  editPositionBtnText: {
+    color: 'black',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   closeDetailBtn: {
     height: 55,
     borderRadius: 15,
@@ -1098,7 +1667,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   closeDetailBtnText: {
-    color: 'black',
     fontSize: 17,
     fontWeight: 'bold',
   },

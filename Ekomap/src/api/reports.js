@@ -142,3 +142,67 @@ export const getIncidents = async (bounds) => {
     };
   }
 };
+
+// Nouvelle fonction pour mettre à jour la position d'un incident
+export const updateIncidentPosition = async (incidentId, lat, lng) => {
+  // MODE SIMULATION
+  if (USE_MOCK_API) {
+    console.log('📝 [SIMULATION] Mise à jour de la position:', {
+      incidentId,
+      lat,
+      lng
+    });
+
+    // Trouver et mettre à jour l'incident dans le mock storage
+    const incidentIndex = mockIncidents.findIndex(i => i.id === incidentId);
+    if (incidentIndex !== -1) {
+      mockIncidents[incidentIndex].coordinates = { lat, lng };
+      
+      console.log('✅ [SIMULATION] Position mise à jour avec succès');
+      
+      return {
+        success: true,
+        data: mockIncidents[incidentIndex],
+        message: 'Position mise à jour (mode simulation)'
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Incident non trouvé'
+      };
+    }
+  }
+
+  // MODE PRODUCTION
+  try {
+    const response = await apiClient.patch(`/incidents/${incidentId}`, {
+      lat: lat.toString(),
+      lng: lng.toString()
+    });
+
+    return {
+      success: true,
+      data: response.data.data,
+      message: 'Position mise à jour avec succès'
+    };
+  } catch (error) {
+    console.error("Échec de la mise à jour de la position:", error);
+    
+    if (error.response) {
+      return {
+        success: false,
+        error: error.response.data.message || 'Erreur serveur'
+      };
+    } else if (error.request) {
+      return {
+        success: false,
+        error: 'Erreur réseau. Vérifiez votre connexion'
+      };
+    }
+    
+    return {
+      success: false,
+      error: 'Erreur inconnue'
+    };
+  }
+};

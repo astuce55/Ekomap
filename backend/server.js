@@ -13,8 +13,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Servir les fichiers statiques (photos)
-app.use('/uploads', express.static('uploads'));
+// Servir les fichiers statiques (photos) avec les bons en-têtes
+app.use('/uploads', express.static('uploads', {
+  setHeaders: (res, path) => {
+    // Définir les en-têtes CORS pour les images
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET');
+    res.set('Cache-Control', 'public, max-age=86400'); // Cache 24h
+  }
+}));
 app.use(express.static('public'));
 
 // Créer le dossier uploads s'il n'existe pas
@@ -233,14 +240,27 @@ app.post('/api/incidents', upload.single('photo'), async (req, res) => {
   }
 });
 
-// PATCH /api/incidents/:id - Mettre à jour un incident (admin)
+// PATCH /api/incidents/:id - Mettre à jour un incident
 app.patch('/api/incidents/:id', async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, lat, lng } = req.body;
+    
+    const updateData = {};
+    
+    // Mise à jour du statut (pour admin)
+    if (status) {
+      updateData.status = status;
+    }
+    
+    // Mise à jour de la position (pour l'utilisateur)
+    if (lat && lng) {
+      updateData['coordinates.lat'] = parseFloat(lat);
+      updateData['coordinates.lng'] = parseFloat(lng);
+    }
     
     const incident = await Incident.findByIdAndUpdate(
       req.params.id,
-      { status },
+      updateData,
       { new: true }
     );
     
@@ -250,6 +270,8 @@ app.patch('/api/incidents/:id', async (req, res) => {
         error: 'Incident non trouvé'
       });
     }
+    
+    console.log('✅ Incident mis à jour:', incident._id);
     
     res.json({
       success: true,
@@ -357,6 +379,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('2. Trouvez l\'IP de votre PC (ipconfig sur Windows, ifconfig sur Mac/Linux)');
   console.log('3. Mettez à jour BACKEND_IP dans src/api/client.js avec votre IP');
   console.log('4. L\'URL sera http://VOTRE_IP:3000/api');
+  console.log('');
+  console.log('📷 Les images sont servies depuis: http://localhost:${PORT}/uploads/');
 });
 
 module.exports = app;
