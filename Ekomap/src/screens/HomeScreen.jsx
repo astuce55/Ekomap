@@ -24,6 +24,58 @@ import { postIncident, getIncidents, updateIncidentPosition } from '../api/repor
 import { useRouter } from 'expo-router';
 import { BACKEND_IP } from '../api/client';
 
+// Service de géocodage amélioré
+const searchPlacesPhoton = async (query, location = null) => {
+  if (!query || query.length < 3) {
+    return [];
+  }
+
+  try {
+    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=8&lang=fr`;
+    
+    if (location) {
+      url += `&lat=${location.latitude}&lon=${location.longitude}`;
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'EkoMapApp/1.0',
+      },
+    });
+
+    if (!response.ok) {
+      console.error('Erreur HTTP:', response.status);
+      return [];
+    }
+
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      return [];
+    }
+
+    return data.features.map(feature => ({
+      id: feature.properties.osm_id || Math.random().toString(),
+      name: feature.properties.name || feature.properties.street || 'Sans nom',
+      shortName: feature.properties.name || feature.properties.street || 'Sans nom',
+      address: [
+        feature.properties.name,
+        feature.properties.street,
+        feature.properties.city,
+        feature.properties.state || 'Cameroun',
+      ].filter(Boolean).join(', '),
+      latitude: feature.geometry.coordinates[1],
+      longitude: feature.geometry.coordinates[0],
+      type: feature.properties.type || 'unknown',
+    }));
+
+  } catch (error) {
+    console.error('Erreur Photon:', error);
+    return [];
+  }
+};
+
 export default function HomeScreen() {
   const { colors, dark } = useTheme();
   const { t } = useLanguage();
@@ -51,9 +103,9 @@ export default function HomeScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportStep, setReportStep] = useState('type');
 
-  // États de recherche et itinéraire (Style Google Maps)
+  // États de recherche et itinéraire
   const [showRouteMenu, setShowRouteMenu] = useState(false);
-  const [routeMode, setRouteMode] = useState(null); // 'from-here' ou 'to-here'
+  const [routeMode, setRouteMode] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [destinationQuery, setDestinationQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -62,13 +114,13 @@ export default function HomeScreen() {
   const [endPoint, setEndPoint] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [routeInfo, setRouteInfo] = useState(null);
-  const [travelMode, setTravelMode] = useState('driving'); // 'driving', 'walking', 'bicycling'
-  const [activeSearchField, setActiveSearchField] = useState('start'); // 'start' ou 'end'
+  const [travelMode, setTravelMode] = useState('driving');
+  const [activeSearchField, setActiveSearchField] = useState('start');
 
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
 
-  // Types d'incidents disponibles
+  // Types d'incidents
   const incidentTypes = [
     { type: 'accident', icon: 'car', label: t('accident'), color: '#FF4444', requiresPhoto: true },
     { type: 'controle', icon: 'shield-checkmark', label: t('control'), color: '#FFA726', requiresPhoto: false },
@@ -83,94 +135,34 @@ export default function HomeScreen() {
     { mode: 'bicycling', icon: 'bicycle', label: 'Vélo', color: '#FBBC04' },
   ];
 
-  // Style de carte sombre
+  // Style carte sombre
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
     { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
     { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
-    {
-      featureType: 'administrative.locality',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#d59563' }],
-    },
-    {
-      featureType: 'poi',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#d59563' }],
-    },
-    {
-      featureType: 'poi.park',
-      elementType: 'geometry',
-      stylers: [{ color: '#263c3f' }],
-    },
-    {
-      featureType: 'poi.park',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#6b9a76' }],
-    },
-    {
-      featureType: 'road',
-      elementType: 'geometry',
-      stylers: [{ color: '#38414e' }],
-    },
-    {
-      featureType: 'road',
-      elementType: 'geometry.stroke',
-      stylers: [{ color: '#212a37' }],
-    },
-    {
-      featureType: 'road',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#9ca5b3' }],
-    },
-    {
-      featureType: 'road.highway',
-      elementType: 'geometry',
-      stylers: [{ color: '#746855' }],
-    },
-    {
-      featureType: 'road.highway',
-      elementType: 'geometry.stroke',
-      stylers: [{ color: '#1f2835' }],
-    },
-    {
-      featureType: 'road.highway',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#f3d19c' }],
-    },
-    {
-      featureType: 'transit',
-      elementType: 'geometry',
-      stylers: [{ color: '#2f3948' }],
-    },
-    {
-      featureType: 'transit.station',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#d59563' }],
-    },
-    {
-      featureType: 'water',
-      elementType: 'geometry',
-      stylers: [{ color: '#17263c' }],
-    },
-    {
-      featureType: 'water',
-      elementType: 'labels.text.fill',
-      stylers: [{ color: '#515c6d' }],
-    },
-    {
-      featureType: 'water',
-      elementType: 'labels.text.stroke',
-      stylers: [{ color: '#17263c' }],
-    },
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#263c3f' }] },
+    { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#6b9a76' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212a37' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#9ca5b3' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#746855' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f2835' }] },
+    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#f3d19c' }] },
+    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f3948' }] },
+    { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#17263c' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#515c6d' }] },
+    { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#17263c' }] },
   ];
 
-  // Demander les permissions de localisation
+  // Permissions de localisation
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission refusée', 'La localisation est nécessaire pour utiliser l\'application');
+        Alert.alert('Permission refusée', 'La localisation est nécessaire');
         return;
       }
 
@@ -185,7 +177,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Charger les incidents
   useEffect(() => {
     loadIncidents();
   }, []);
@@ -197,11 +188,10 @@ export default function HomeScreen() {
         setIncidents(response.data || []);
       }
     } catch (error) {
-      console.error('Erreur lors du chargement des incidents:', error);
+      console.error('Erreur chargement incidents:', error);
     }
   };
 
-  // Centrer sur la position de l'utilisateur
   const centerOnUser = () => {
     if (location && mapRef.current) {
       mapRef.current.animateToRegion({
@@ -213,56 +203,39 @@ export default function HomeScreen() {
     }
   };
 
-  // Fonction pour obtenir l'URL complète de l'image
   const getImageUrl = (photoUrl) => {
     if (!photoUrl) return null;
     if (photoUrl.startsWith('http')) return photoUrl;
     return `http://${BACKEND_IP}:3000${photoUrl}`;
   };
 
-  // Recherche de lieux avec debounce (comme Google Maps)
+  // Recherche de lieux avec Photon (plus stable)
   const searchPlaces = async (query, field) => {
     if (!query || query.length < 3) {
       setSearchResults([]);
       return;
     }
 
-    // Clear previous timeout
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current);
     }
 
-    // Set new timeout for debounce (300ms)
     searchTimeout.current = setTimeout(async () => {
       setIsSearching(true);
       try {
-        // Utilisation de Nominatim avec recherche plus précise
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&countrycodes=cm&addressdetails=1`
-        );
-        const data = await response.json();
-        
-        const results = data.map(place => ({
-          id: place.place_id,
-          name: place.display_name,
-          shortName: place.name || place.display_name.split(',')[0],
-          address: place.display_name,
-          latitude: parseFloat(place.lat),
-          longitude: parseFloat(place.lon),
-          type: place.type,
-          class: place.class,
-        }));
-        
+        console.log('🔍 Recherche:', query);
+        const results = await searchPlacesPhoton(query, location?.coords);
+        console.log('✅ Résultats:', results.length);
         setSearchResults(results);
       } catch (error) {
-        console.error('Erreur lors de la recherche:', error);
+        console.error('❌ Erreur recherche:', error);
+        setSearchResults([]);
       } finally {
         setIsSearching(false);
       }
     }, 300);
   };
 
-  // Sélectionner un lieu
   const selectPlace = (place, field) => {
     if (field === 'start') {
       setStartPoint(place);
@@ -274,14 +247,12 @@ export default function HomeScreen() {
     
     setSearchResults([]);
     
-    // Si les deux points sont définis, calculer l'itinéraire
     if ((field === 'start' && endPoint) || (field === 'end' && startPoint)) {
       const start = field === 'start' ? place : startPoint;
       const end = field === 'end' ? place : endPoint;
       calculateRoute(start, end, travelMode);
     }
 
-    // Centrer sur le lieu sélectionné
     if (mapRef.current) {
       mapRef.current.animateToRegion({
         latitude: place.latitude,
@@ -292,7 +263,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Utiliser ma position
   const useMyLocation = (field) => {
     if (!location) {
       Alert.alert('Erreur', 'Position non disponible');
@@ -322,7 +292,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Inverser départ et arrivée
   const swapLocations = () => {
     const tempPoint = startPoint;
     const tempQuery = searchQuery;
@@ -338,17 +307,14 @@ export default function HomeScreen() {
     }
   };
 
-  // Calculer l'itinéraire avec différents modes de transport
   const calculateRoute = async (start, end, mode) => {
     try {
       setIsSearching(true);
       
-      // Choisir le profil selon le mode de transport
-      let profile = 'driving'; // Par défaut
+      let profile = 'driving';
       if (mode === 'walking') profile = 'foot';
       if (mode === 'bicycling') profile = 'bike';
       
-      // Utilisation d'OSRM avec le bon profil
       const response = await fetch(
         `https://router.project-osrm.org/route/v1/${profile === 'driving' ? 'car' : profile}/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true`
       );
@@ -363,11 +329,9 @@ export default function HomeScreen() {
         
         setRouteCoordinates(coordinates);
         
-        // Calculer les informations de temps et distance
         const distanceKm = (route.distance / 1000).toFixed(1);
         const durationMin = Math.round(route.duration / 60);
         
-        // Formatter la durée
         let durationText = '';
         if (durationMin < 60) {
           durationText = `${durationMin} min`;
@@ -383,7 +347,6 @@ export default function HomeScreen() {
           durationMinutes: durationMin,
         });
 
-        // Ajuster la vue de la carte pour montrer tout l'itinéraire
         if (mapRef.current) {
           mapRef.current.fitToCoordinates(
             [
@@ -398,14 +361,13 @@ export default function HomeScreen() {
         }
       }
     } catch (error) {
-      console.error('Erreur lors du calcul de l\'itinéraire:', error);
+      console.error('Erreur calcul itinéraire:', error);
       Alert.alert('Erreur', 'Impossible de calculer l\'itinéraire');
     } finally {
       setIsSearching(false);
     }
   };
 
-  // Changer le mode de transport
   const changeTravelMode = (mode) => {
     setTravelMode(mode);
     if (startPoint && endPoint) {
@@ -413,7 +375,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Effacer l'itinéraire
   const clearRoute = () => {
     setRouteCoordinates([]);
     setStartPoint(null);
@@ -422,14 +383,13 @@ export default function HomeScreen() {
     setSearchQuery('');
     setDestinationQuery('');
     setShowRouteMenu(false);
+    setSearchResults([]);
   };
 
-  // Ouvrir le menu d'itinéraire (style Google Maps)
   const openRouteMenu = (mode) => {
     setRouteMode(mode);
     
     if (mode === 'from-here' && location) {
-      // Itinéraire depuis ma position
       const myLocationPoint = {
         id: 'my-location',
         name: 'Ma position',
@@ -441,7 +401,6 @@ export default function HomeScreen() {
       setSearchQuery('Ma position');
       setActiveSearchField('end');
     } else if (mode === 'to-here' && location) {
-      // Itinéraire vers ma position
       const myLocationPoint = {
         id: 'my-location',
         name: 'Ma position',
@@ -459,7 +418,6 @@ export default function HomeScreen() {
     setShowRouteMenu(true);
   };
 
-  // Démarrer un nouveau signalement
   const startReport = () => {
     if (isGuest || user) {
       setShowReportMenu(true);
@@ -476,7 +434,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Sélectionner le type d'incident
   const selectIncidentType = (incident) => {
     setSelectedIncidentType(incident);
     if (!incident.requiresPhoto) {
@@ -486,7 +443,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Prendre ou sélectionner une photo
   const handleImagePicker = async (source) => {
     try {
       let result;
@@ -522,12 +478,11 @@ export default function HomeScreen() {
         setReportStep('confirm');
       }
     } catch (error) {
-      console.error('Erreur lors de la sélection de l\'image:', error);
+      console.error('Erreur sélection image:', error);
       Alert.alert('Erreur', 'Impossible de charger l\'image');
     }
   };
 
-  // Soumettre le signalement
   const submitReport = async () => {
     if (!selectedIncidentType || !location) {
       Alert.alert('Erreur', 'Veuillez compléter toutes les étapes');
@@ -557,7 +512,7 @@ export default function HomeScreen() {
       if (response.success) {
         Alert.alert(
           'Succès',
-          'Votre signalement a été enregistré avec succès. Merci de contribuer à la sécurité de la communauté !',
+          'Votre signalement a été enregistré avec succès !',
           [{ 
             text: 'OK', 
             onPress: () => {
@@ -570,13 +525,12 @@ export default function HomeScreen() {
         Alert.alert('Erreur', response.error || 'Impossible d\'envoyer le signalement');
       }
     } catch (error) {
-      Alert.alert('Erreur', 'Une erreur est survenue lors de l\'envoi');
+      Alert.alert('Erreur', 'Une erreur est survenue');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Fermer le modal de signalement
   const closeReportModal = () => {
     setShowReportMenu(false);
     setSelectedIncidentType(null);
@@ -584,10 +538,9 @@ export default function HomeScreen() {
     setReportStep('type');
   };
 
-  // Activer le mode édition
   const enableEditMode = (incident) => {
     if (!user && !isGuest) {
-      Alert.alert('Erreur', 'Vous devez être connecté pour modifier un incident');
+      Alert.alert('Erreur', 'Vous devez être connecté');
       return;
     }
 
@@ -600,7 +553,6 @@ export default function HomeScreen() {
     setSelectedIncident(null);
   };
 
-  // Sauvegarder la nouvelle position
   const saveNewPosition = async () => {
     if (!editingIncident) return;
 
@@ -612,24 +564,22 @@ export default function HomeScreen() {
       );
 
       if (response.success) {
-        Alert.alert('Succès', 'La position a été mise à jour');
+        Alert.alert('Succès', 'Position mise à jour');
         setEditingIncident(null);
         loadIncidents();
       } else {
-        Alert.alert('Erreur', 'Impossible de mettre à jour la position');
+        Alert.alert('Erreur', 'Impossible de mettre à jour');
       }
     } catch (error) {
       Alert.alert('Erreur', 'Une erreur est survenue');
     }
   };
 
-  // Annuler l'édition
   const cancelEdit = () => {
     setEditingIncident(null);
     loadIncidents();
   };
 
-  // Gérer le déplacement du marqueur
   const handleMarkerDragEnd = (e, incident) => {
     if (editingIncident && editingIncident._id === incident._id) {
       const { latitude, longitude } = e.nativeEvent.coordinate;
@@ -640,14 +590,13 @@ export default function HomeScreen() {
     }
   };
 
-  // Rendu du contenu de signalement
   const renderReportContent = () => {
     switch (reportStep) {
       case 'type':
         return (
           <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={[styles.instructionText, { color: colors.subText, marginBottom: 20 }]}>
-              Sélectionnez le type d'incident que vous souhaitez signaler :
+              Sélectionnez le type d'incident :
             </Text>
             <View style={styles.incidentTypeGrid}>
               {incidentTypes.map((incident) => (
@@ -674,7 +623,7 @@ export default function HomeScreen() {
             <View style={[styles.instructionCard, { backgroundColor: colors.card }]}>
               <Ionicons name="camera" size={24} color={colors.accent} />
               <Text style={[styles.instructionText, { color: colors.text }]}>
-                Prenez une photo de l'incident pour aider la communauté
+                Prenez une photo de l'incident
               </Text>
             </View>
 
@@ -775,7 +724,7 @@ export default function HomeScreen() {
               ) : (
                 <>
                   <Ionicons name="checkmark-circle" size={24} color="black" />
-                  <Text style={styles.submitBtnText}>Envoyer le signalement</Text>
+                  <Text style={styles.submitBtnText}>Envoyer</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -789,7 +738,6 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Carte */}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -799,7 +747,6 @@ export default function HomeScreen() {
         showsUserLocation
         showsMyLocationButton={false}
       >
-        {/* Itinéraire */}
         {routeCoordinates.length > 0 && (
           <Polyline
             coordinates={routeCoordinates}
@@ -808,7 +755,6 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Marqueur de départ */}
         {startPoint && (
           <Marker
             coordinate={{ latitude: startPoint.latitude, longitude: startPoint.longitude }}
@@ -820,7 +766,6 @@ export default function HomeScreen() {
           </Marker>
         )}
 
-        {/* Marqueur d'arrivée */}
         {endPoint && (
           <Marker
             coordinate={{ latitude: endPoint.latitude, longitude: endPoint.longitude }}
@@ -832,7 +777,6 @@ export default function HomeScreen() {
           </Marker>
         )}
 
-        {/* Incidents sur la carte */}
         {incidents.map((incident) => {
           const incidentType = incidentTypes.find(t => t.type === incident.type);
           const isEditing = editingIncident && editingIncident._id === incident._id;
@@ -870,7 +814,6 @@ export default function HomeScreen() {
         })}
       </MapView>
 
-      {/* Bouton Itinéraire (principal) */}
       {!showRouteMenu && !editingIncident && (
         <TouchableOpacity
           style={[styles.routeBtn, { backgroundColor: colors.card }]}
@@ -881,17 +824,14 @@ export default function HomeScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Menu d'itinéraire (Style Google Maps) */}
       {showRouteMenu && (
         <View style={[styles.routeMenuContainer, { backgroundColor: colors.background }]}>
-          {/* Champs de recherche */}
           <View style={[styles.routeSearchCard, { backgroundColor: colors.card }]}>
-            {/* Départ */}
             <View style={styles.routeInputRow}>
               <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
               <TextInput
                 style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                placeholder="Choisir le point de départ"
+                placeholder="Point de départ"
                 placeholderTextColor={colors.subText}
                 value={searchQuery}
                 onChangeText={(text) => {
@@ -912,7 +852,6 @@ export default function HomeScreen() {
               )}
             </View>
 
-            {/* Bouton inverser */}
             <TouchableOpacity 
               style={styles.swapButton}
               onPress={swapLocations}
@@ -920,12 +859,11 @@ export default function HomeScreen() {
               <Ionicons name="swap-vertical" size={24} color={colors.subText} />
             </TouchableOpacity>
 
-            {/* Arrivée */}
             <View style={styles.routeInputRow}>
               <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
               <TextInput
                 style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                placeholder="Choisir la destination"
+                placeholder="Destination"
                 placeholderTextColor={colors.subText}
                 value={destinationQuery}
                 onChangeText={(text) => {
@@ -946,7 +884,6 @@ export default function HomeScreen() {
               )}
             </View>
 
-            {/* Bouton Ma position */}
             <TouchableOpacity
               style={styles.myLocationButton}
               onPress={() => useMyLocation(activeSearchField)}
@@ -958,7 +895,6 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Résultats de recherche */}
           {searchResults.length > 0 && (
             <View style={[styles.searchResultsContainer, { backgroundColor: colors.card }]}>
               <FlatList
@@ -984,7 +920,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Modes de transport */}
           {routeCoordinates.length > 0 && (
             <View style={[styles.travelModesContainer, { backgroundColor: colors.card }]}>
               {travelModes.map((mode) => (
@@ -1012,7 +947,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Informations de l'itinéraire */}
           {routeInfo && (
             <View style={[styles.routeInfoCard, { backgroundColor: colors.card }]}>
               <View style={styles.routeInfoRow}>
@@ -1033,7 +967,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Bouton fermer */}
           <TouchableOpacity
             style={[styles.closeRouteBtn, { backgroundColor: colors.card }]}
             onPress={clearRoute}
@@ -1043,7 +976,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Bouton Ma position */}
       <TouchableOpacity
         style={[styles.myLocationBtn, { backgroundColor: colors.card }]}
         onPress={centerOnUser}
@@ -1051,7 +983,6 @@ export default function HomeScreen() {
         <Ionicons name="locate" size={24} color={colors.accent} />
       </TouchableOpacity>
 
-      {/* Bouton de signalement */}
       {!editingIncident && (
         <TouchableOpacity
           style={[styles.fab, { backgroundColor: colors.accent }]}
@@ -1061,7 +992,6 @@ export default function HomeScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bouton Paramètres */}
       <TouchableOpacity
         style={[styles.settingsBtn, { backgroundColor: colors.card }]}
         onPress={() => router.push('/settings')}
@@ -1069,11 +999,10 @@ export default function HomeScreen() {
         <Ionicons name="settings-outline" size={24} color={colors.text} />
       </TouchableOpacity>
 
-      {/* Barre d'édition de position */}
       {editingIncident && (
         <View style={[styles.editBar, { backgroundColor: colors.card }]}>
           <Text style={[styles.editBarText, { color: colors.text }]}>
-            Déplacez le marqueur à la bonne position
+            Déplacez le marqueur
           </Text>
           <View style={styles.editBarButtons}>
             <TouchableOpacity
@@ -1092,7 +1021,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Modal de signalement */}
       <Modal
         visible={showReportMenu}
         animationType="slide"
@@ -1118,7 +1046,6 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Modal de détails d'incident */}
       <Modal
         visible={selectedIncident !== null}
         animationType="slide"
@@ -1132,7 +1059,7 @@ export default function HomeScreen() {
                 <Ionicons name="close" size={28} color={colors.text} />
               </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                Détails de l'incident
+                Détails
               </Text>
               <View style={{ width: 28 }} />
             </View>
@@ -1221,12 +1148,8 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  map: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  map: { flex: 1 },
   routeBtn: {
     position: 'absolute',
     top: 60,
@@ -1243,10 +1166,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     gap: 8,
   },
-  routeBtnText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  routeBtnText: { fontSize: 16, fontWeight: '600' },
   routeMenuContainer: {
     position: 'absolute',
     top: 0,
@@ -1272,11 +1192,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 10,
   },
-  routeInputDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
+  routeInputDot: { width: 12, height: 12, borderRadius: 6 },
   routeInput: {
     flex: 1,
     height: 45,
@@ -1295,10 +1211,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 8,
   },
-  myLocationButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  myLocationButtonText: { fontSize: 14, fontWeight: '600' },
   searchResultsContainer: {
     marginTop: 10,
     borderRadius: 15,
@@ -1312,17 +1225,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     gap: 12,
   },
-  searchResultContent: {
-    flex: 1,
-  },
-  searchResultName: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  searchResultAddress: {
-    fontSize: 13,
-  },
+  searchResultContent: { flex: 1 },
+  searchResultName: { fontSize: 16, fontWeight: '600', marginBottom: 2 },
+  searchResultAddress: { fontSize: 13 },
   travelModesContainer: {
     flexDirection: 'row',
     marginTop: 10,
@@ -1337,11 +1242,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
-  travelModeText: {
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: '600',
-  },
+  travelModeText: { fontSize: 12, marginTop: 4, fontWeight: '600' },
   routeInfoCard: {
     flexDirection: 'row',
     marginTop: 10,
@@ -1350,15 +1251,8 @@ const styles = StyleSheet.create({
     elevation: 3,
     gap: 20,
   },
-  routeInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  routeInfoText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  routeInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  routeInfoText: { fontSize: 16, fontWeight: 'bold' },
   closeRouteBtn: {
     position: 'absolute',
     top: 70,
@@ -1379,11 +1273,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: 'white',
   },
-  routeMarkerText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  routeMarkerText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   myLocationBtn: {
     position: 'absolute',
     bottom: 100,
@@ -1437,16 +1327,8 @@ const styles = StyleSheet.create({
     padding: 20,
     elevation: 10,
   },
-  editBarText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  editBarButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
+  editBarText: { fontSize: 16, fontWeight: 'bold', textAlign: 'center', marginBottom: 15 },
+  editBarButtons: { flexDirection: 'row', gap: 10 },
   editBarBtn: {
     flex: 1,
     height: 50,
@@ -1454,11 +1336,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  editBarBtnText: {
-    color: 'black',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  editBarBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
   modalContainer: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1477,19 +1355,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 10,
-  },
-  incidentTypeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 15,
-    justifyContent: 'space-between',
-  },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', flex: 1, textAlign: 'center', marginHorizontal: 10 },
+  incidentTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15, justifyContent: 'space-between' },
   incidentTypeCard: {
     width: '47%',
     aspectRatio: 1,
@@ -1503,39 +1370,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
-  incidentIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  incidentLabel: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  instructionCard: {
-    flexDirection: 'row',
-    padding: 15,
-    borderRadius: 15,
-    gap: 12,
-    alignItems: 'center',
-  },
-  instructionText: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  photoStep: {
-    flex: 1,
-  },
-  photoButtons: {
-    flexDirection: 'row',
-    gap: 15,
-    marginTop: 20,
-  },
+  incidentIcon: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  incidentLabel: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+  instructionCard: { flexDirection: 'row', padding: 15, borderRadius: 15, gap: 12, alignItems: 'center' },
+  instructionText: { flex: 1, fontSize: 14, lineHeight: 20 },
+  photoStep: { flex: 1 },
+  photoButtons: { flexDirection: 'row', gap: 15, marginTop: 20 },
   photoBtn: {
     flex: 1,
     aspectRatio: 1,
@@ -1545,32 +1385,11 @@ const styles = StyleSheet.create({
     padding: 20,
     elevation: 3,
   },
-  photoBtnText: {
-    marginTop: 12,
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  confirmStep: {
-    flex: 1,
-  },
-  previewImage: {
-    width: '100%',
-    height: 220,
-    borderRadius: 15,
-    marginBottom: 20,
-  },
-  detailCard: {
-    padding: 15,
-    borderRadius: 15,
-    gap: 15,
-    marginBottom: 20,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  photoBtnText: { marginTop: 12, fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  confirmStep: { flex: 1 },
+  previewImage: { width: '100%', height: 220, borderRadius: 15, marginBottom: 20 },
+  detailCard: { padding: 15, borderRadius: 15, gap: 15, marginBottom: 20 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   detailIconContainer: {
     width: 36,
     height: 36,
@@ -1579,17 +1398,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0, 255, 102, 0.1)',
   },
-  detailContent: {
-    flex: 1,
-  },
-  detailLabel: {
-    fontSize: 12,
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  detailContent: { flex: 1 },
+  detailLabel: { fontSize: 12, marginBottom: 2 },
+  detailValue: { fontSize: 15, fontWeight: '600' },
   submitBtn: {
     height: 55,
     borderRadius: 15,
@@ -1603,14 +1414,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
-  submitBtnDisabled: {
-    opacity: 0.6,
-  },
-  submitBtnText: {
-    color: 'black',
-    fontSize: 17,
-    fontWeight: 'bold',
-  },
+  submitBtnDisabled: { opacity: 0.6 },
+  submitBtnText: { color: 'black', fontSize: 17, fontWeight: 'bold' },
   customMarker: {
     width: 40,
     height: 40,
@@ -1639,12 +1444,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4.65,
   },
-  incidentDetailPhoto: {
-    width: '100%',
-    height: 220,
-    borderRadius: 15,
-    marginBottom: 15,
-  },
+  incidentDetailPhoto: { width: '100%', height: 220, borderRadius: 15, marginBottom: 15 },
   editPositionBtn: {
     height: 50,
     borderRadius: 12,
@@ -1654,11 +1454,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
-  editPositionBtnText: {
-    color: 'black',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  editPositionBtnText: { color: 'black', fontSize: 16, fontWeight: 'bold' },
   closeDetailBtn: {
     height: 55,
     borderRadius: 15,
@@ -1666,8 +1462,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     elevation: 3,
   },
-  closeDetailBtnText: {
-    fontSize: 17,
-    fontWeight: 'bold',
-  },
+  closeDetailBtnText: { fontSize: 17, fontWeight: 'bold' },
 });
