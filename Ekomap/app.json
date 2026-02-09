@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "TestApp",
-    "slug": "TestApp",
+    "name": "EkoMap",
+    "slug": "EkoMap",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "testapp",
+    "icon": "./assets/images/LOGO-1.png",
+    "scheme": "ekomap",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -30,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/splash-LOGO.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",

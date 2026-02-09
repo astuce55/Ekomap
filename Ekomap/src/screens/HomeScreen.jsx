@@ -23,6 +23,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { postIncident, getIncidents, updateIncidentPosition } from '../api/reports';
+import { getTrafficStatus } from '../api/traffic';
+import { calculateBothRoutes, formatDistance, formatDuration } from '../api/routing';
 import { useRouter } from 'expo-router';
 import { BACKEND_IP } from '../api/client';
 
@@ -98,6 +100,10 @@ export default function HomeScreen() {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [editingIncident, setEditingIncident] = useState(null);
 
+  // États du trafic
+  const [trafficData, setTrafficData] = useState([]);
+  const [lastTrafficUpdate, setLastTrafficUpdate] = useState(null);
+
   // États du signalement
   const [showReportMenu, setShowReportMenu] = useState(false);
   const [selectedIncidentType, setSelectedIncidentType] = useState(null);
@@ -119,6 +125,23 @@ export default function HomeScreen() {
   const [travelMode, setTravelMode] = useState('driving');
   const [activeSearchField, setActiveSearchField] = useState('start');
   const [isRoutePanelMinimized, setIsRoutePanelMinimized] = useState(false);
+  const [showRouteResultsBar, setShowRouteResultsBar] = useState(false);
+
+  // Nouveaux états pour l'itinéraire optimisé
+  const [selectedRouteType, setSelectedRouteType] = useState('normal'); // 'normal' ou 'optimized'
+  const [normalRouteCoordinates, setNormalRouteCoordinates] = useState([]);
+  const [optimizedRouteCoordinates, setOptimizedRouteCoordinates] = useState([]);
+  const [normalRouteInfo, setNormalRouteInfo] = useState(null);
+  const [optimizedRouteInfo, setOptimizedRouteInfo] = useState(null);
+  const [showBothRoutes, setShowBothRoutes] = useState(true);
+  const [routeComparison, setRouteComparison] = useState(null);
+  
+  // Stocker les temps pour tous les modes de transport
+  const [allModesRouteInfo, setAllModesRouteInfo] = useState({
+    driving: { normal: null, optimized: null },
+    walking: { normal: null, optimized: null },
+    bicycling: { normal: null, optimized: null },
+  });
 
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
@@ -212,6 +235,36 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadIncidents();
+  }, []);
+
+  // Fonction pour charger les données de trafic
+  const loadTrafficData = async () => {
+    try {
+      const response = await getTrafficStatus();
+      if (response.success) {
+        setTrafficData(response.data || []);
+        setLastTrafficUpdate(new Date());
+        console.log('🚦 Données de trafic mises à jour:', response.data?.length || 0, 'points');
+      }
+    } catch (error) {
+      console.error('Erreur chargement trafic:', error);
+    }
+  };
+
+  // Polling du trafic toutes les 20 secondes
+  useEffect(() => {
+    // Chargement initial
+    loadTrafficData();
+
+    // Polling toutes les 20 secondes
+    const trafficInterval = setInterval(() => {
+      loadTrafficData();
+    }, 20000);
+
+    // Cleanup lors du démontage
+    return () => {
+      clearInterval(trafficInterval);
+    };
   }, []);
 
   const loadIncidents = async () => {
@@ -344,74 +397,83 @@ export default function HomeScreen() {
     try {
       setIsSearching(true);
       
-      let profile = 'driving';
-      if (mode === 'walking') profile = 'foot';
-      if (mode === 'bicycling') profile = 'bike';
+      console.log('🗺️ Calcul des itinéraires pour tous les modes...');
       
-      const response = await fetch(
-        `https://router.project-osrm.org/route/v1/${profile === 'driving' ? 'car' : profile}/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true`
-      );
-      const data = await response.json();
+      // Calculer les itinéraires pour TOUS les modes de transport
+      const modesPromises = travelModes.map(async (travelMode) => {
+        const routes = await calculateBothRoutes(start, end, incidents, trafficData, travelMode.mode);
+        return {
+          mode: travelMode.mode,
+          normal: {
+            distance: formatDistance(routes.normal.distance),
+            duration: formatDuration(routes.normal.duration),
+            durationMinutes: Math.round(routes.normal.duration / 60),
+          },
+          optimized: {
+            distance: formatDistance(routes.optimized.distance),
+            duration: formatDuration(routes.optimized.duration),
+            durationMinutes: Math.round(routes.optimized.duration / 60),
+            obstaclesAvoided: routes.optimized.obstaclesAvoided,
+            safetyScore: routes.optimized.safetyScore
+          },
+          coordinates: routes.normal.coordinates,
+          optimizedCoordinates: routes.optimized.coordinates,
+        };
+      });
+      
+      const allModesResults = await Promise.all(modesPromises);
+      
+      // Stocker les infos pour tous les modes
+      const newAllModesInfo = {};
+      allModesResults.forEach(result => {
+        newAllModesInfo[result.mode] = {
+          normal: result.normal,
+          optimized: result.optimized,
+          coordinates: result.coordinates,
+          optimizedCoordinates: result.optimizedCoordinates,
+        };
+      });
+      setAllModesRouteInfo(newAllModesInfo);
+      
+      // Définir les coordonnées pour le mode sélectionné
+      const selectedModeResult = allModesResults.find(r => r.mode === mode);
+      setNormalRouteCoordinates(selectedModeResult.coordinates);
+      setOptimizedRouteCoordinates(selectedModeResult.optimizedCoordinates);
+      setNormalRouteInfo(selectedModeResult.normal);
+      setOptimizedRouteInfo(selectedModeResult.optimized);
+      
+      // Par défaut, sélectionner l'itinéraire approprié
+      if (selectedModeResult.optimized.obstaclesAvoided > 0) {
+        setSelectedRouteType('optimized');
+        setRouteCoordinates(selectedModeResult.optimizedCoordinates);
+        setRouteInfo(selectedModeResult.optimized);
+      } else {
+        setSelectedRouteType('normal');
+        setRouteCoordinates(selectedModeResult.coordinates);
+        setRouteInfo(selectedModeResult.normal);
+      }
+      
+      console.log('✅ Itinéraires calculés pour tous les modes');
 
-      if (data.routes && data.routes.length > 0) {
-        const route = data.routes[0];
-        const coordinates = route.geometry.coordinates.map(coord => ({
-          latitude: coord[1],
-          longitude: coord[0],
-        }));
-        
-        setRouteCoordinates(coordinates);
-        
-        // Calcul de la distance en km
-        const distanceKm = route.distance / 1000;
-        
-        // Récupération de la vitesse moyenne selon le mode de transport
-        const modeConfig = travelModes.find(m => m.mode === mode);
-        const avgSpeed = modeConfig ? modeConfig.avgSpeed : 30; // Vitesse par défaut 30 km/h
-        
-        // Calcul du temps en minutes basé sur la distance et la vitesse
-        // Temps = Distance / Vitesse (en heures) * 60 (pour avoir des minutes)
-        const durationMin = Math.round((distanceKm / avgSpeed) * 60);
-        
-        let durationText = '';
-        if (durationMin < 60) {
-          durationText = `${durationMin} min`;
-        } else {
-          const hours = Math.floor(durationMin / 60);
-          const mins = durationMin % 60;
-          durationText = mins > 0 ? `${hours}h ${mins}min` : `${hours}h`;
-        }
-        
-        setRouteInfo({
-          distance: `${distanceKm.toFixed(1)} km`,
-          duration: durationText,
-          durationMinutes: durationMin,
-        });
+      // Minimiser le panneau automatiquement après calcul
+      setTimeout(() => {
+        setShowRouteMenu(false); // Fermer le menu de recherche
+        setShowRouteResultsBar(true); // Afficher la barre de résultats
+        Keyboard.dismiss();
+      }, 500);
 
-        console.log('✅ Itinéraire calculé:', {
-          distance: `${distanceKm.toFixed(1)} km`,
-          speed: `${avgSpeed} km/h`,
-          duration: durationText
-        });
-
-        // Minimiser le panneau automatiquement après calcul
-        setTimeout(() => {
-          setIsRoutePanelMinimized(true);
-          Keyboard.dismiss();
-        }, 500);
-
-        if (mapRef.current) {
-          mapRef.current.fitToCoordinates(
-            [
-              { latitude: start.latitude, longitude: start.longitude },
-              { latitude: end.latitude, longitude: end.longitude }
-            ],
-            {
-              edgePadding: { top: 150, right: 50, bottom: 200, left: 50 },
-              animated: true,
-            }
-          );
-        }
+      // Ajuster la vue de la carte
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(
+          [
+            { latitude: start.latitude, longitude: start.longitude },
+            { latitude: end.latitude, longitude: end.longitude }
+          ],
+          {
+            edgePadding: { top: 150, right: 50, bottom: 200, left: 50 },
+            animated: true,
+          }
+        );
       }
     } catch (error) {
       console.error('Erreur calcul itinéraire:', error);
@@ -430,14 +492,27 @@ export default function HomeScreen() {
 
   const clearRoute = () => {
     setRouteCoordinates([]);
+    setNormalRouteCoordinates([]);
+    setOptimizedRouteCoordinates([]);
     setStartPoint(null);
     setEndPoint(null);
     setRouteInfo(null);
+    setNormalRouteInfo(null);
+    setOptimizedRouteInfo(null);
+    setRouteComparison(null);
+    setSelectedRouteType('normal');
+    setShowBothRoutes(true);
     setSearchQuery('');
     setDestinationQuery('');
     setShowRouteMenu(false);
+    setShowRouteResultsBar(false);
     setSearchResults([]);
     setIsRoutePanelMinimized(false);
+    setAllModesRouteInfo({
+      driving: { normal: null, optimized: null },
+      walking: { normal: null, optimized: null },
+      bicycling: { normal: null, optimized: null },
+    });
   };
 
   const openRouteMenu = (mode) => {
@@ -801,10 +876,31 @@ export default function HomeScreen() {
         showsUserLocation
         showsMyLocationButton={false}
       >
-        {routeCoordinates.length > 0 && (
+        {/* Itinéraire normal (en gris semi-transparent si les deux sont affichés) */}
+        {normalRouteCoordinates.length > 0 && showBothRoutes && (
+          <Polyline
+            coordinates={normalRouteCoordinates}
+            strokeColor={selectedRouteType === 'normal' ? (travelModes.find(m => m.mode === travelMode)?.color || colors.accent) : 'rgba(128, 128, 128, 0.5)'}
+            strokeWidth={selectedRouteType === 'normal' ? 5 : 3}
+            lineDashPattern={selectedRouteType === 'normal' ? null : [10, 10]}
+          />
+        )}
+
+        {/* Itinéraire optimisé (en vert/accent si sélectionné) */}
+        {optimizedRouteCoordinates.length > 0 && showBothRoutes && (
+          <Polyline
+            coordinates={optimizedRouteCoordinates}
+            strokeColor={selectedRouteType === 'optimized' ? '#00E676' : 'rgba(0, 230, 118, 0.5)'}
+            strokeWidth={selectedRouteType === 'optimized' ? 5 : 3}
+            lineDashPattern={selectedRouteType === 'optimized' ? null : [5, 5]}
+          />
+        )}
+
+        {/* Si un seul itinéraire affiché */}
+        {!showBothRoutes && routeCoordinates.length > 0 && (
           <Polyline
             coordinates={routeCoordinates}
-            strokeColor={travelModes.find(m => m.mode === travelMode)?.color || colors.accent}
+            strokeColor={selectedRouteType === 'optimized' ? '#00E676' : (travelModes.find(m => m.mode === travelMode)?.color || colors.accent)}
             strokeWidth={5}
           />
         )}
@@ -862,6 +958,40 @@ export default function HomeScreen() {
                   size={isEditing ? 28 : 22}
                   color="white"
                 />
+              </View>
+            </Marker>
+          );
+        })}
+
+        {/* Marqueurs de trafic (embouteillages) */}
+        {trafficData.map((traffic) => {
+          // Afficher uniquement si embouteillage détecté
+          if (traffic.statut !== 'Embouteillage') return null;
+
+          return (
+            <Marker
+              key={`traffic-${traffic.id}`}
+              coordinate={{
+                latitude: traffic.coordinates.lat,
+                longitude: traffic.coordinates.lng,
+              }}
+              onPress={() => {
+                Alert.alert(
+                  '🚦 Embouteillage détecté',
+                  `Position: ${traffic.coordinates.lat.toFixed(4)}, ${traffic.coordinates.lng.toFixed(4)}\n` +
+                  `Véhicules: ${traffic.vehicules_detectes}\n` +
+                  `Taux d'immobilité: ${(traffic.taux_immobilite * 100).toFixed(0)}%`,
+                  [{ text: 'OK' }]
+                );
+              }}
+            >
+              <View style={styles.trafficMarker}>
+                <MaterialCommunityIcons
+                  name="car-multiple"
+                  size={18}
+                  color="#FF1744"
+                />
+                <View style={styles.trafficPulse} />
               </View>
             </Marker>
           );
@@ -1066,6 +1196,111 @@ export default function HomeScreen() {
                   </View>
                 )}
 
+                {/* Sélecteur de type d'itinéraire */}
+                {normalRouteInfo && optimizedRouteInfo && (
+                  <View style={[styles.routeTypeSelectorContainer, { backgroundColor: colors.card }]}>
+                    <Text style={[styles.routeTypeSelectorTitle, { color: colors.subText }]}>
+                      Type d'itinéraire
+                    </Text>
+                    <View style={styles.routeTypeBtns}>
+                      {/* Itinéraire Normal */}
+                      <TouchableOpacity
+                        style={[
+                          styles.routeTypeBtn,
+                          selectedRouteType === 'normal' && { backgroundColor: '#4285F420', borderColor: '#4285F4' }
+                        ]}
+                        onPress={() => {
+                          setSelectedRouteType('normal');
+                          setRouteCoordinates(normalRouteCoordinates);
+                          setRouteInfo(normalRouteInfo);
+                        }}
+                      >
+                        <View style={styles.routeTypeBtnHeader}>
+                          <Ionicons 
+                            name="navigate" 
+                            size={20} 
+                            color={selectedRouteType === 'normal' ? '#4285F4' : colors.subText} 
+                          />
+                          <Text style={[
+                            styles.routeTypeBtnTitle,
+                            { color: selectedRouteType === 'normal' ? '#4285F4' : colors.text }
+                          ]}>
+                            Rapide
+                          </Text>
+                        </View>
+                        <Text style={[styles.routeTypeInfo, { color: colors.subText }]}>
+                          {normalRouteInfo.duration} • {normalRouteInfo.distance}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Itinéraire Optimisé */}
+                      <TouchableOpacity
+                        style={[
+                          styles.routeTypeBtn,
+                          selectedRouteType === 'optimized' && { backgroundColor: '#00E67620', borderColor: '#00E676' }
+                        ]}
+                        onPress={() => {
+                          setSelectedRouteType('optimized');
+                          setRouteCoordinates(optimizedRouteCoordinates);
+                          setRouteInfo(optimizedRouteInfo);
+                        }}
+                      >
+                        <View style={styles.routeTypeBtnHeader}>
+                          <Ionicons 
+                            name="shield-checkmark" 
+                            size={20} 
+                            color={selectedRouteType === 'optimized' ? '#00E676' : colors.subText} 
+                          />
+                          <Text style={[
+                            styles.routeTypeBtnTitle,
+                            { color: selectedRouteType === 'optimized' ? '#00E676' : colors.text }
+                          ]}>
+                            Sécurisé
+                          </Text>
+                          {optimizedRouteInfo.obstaclesAvoided > 0 && (
+                            <View style={styles.obstaclesBadge}>
+                              <Text style={styles.obstaclesBadgeText}>
+                                {optimizedRouteInfo.obstaclesAvoided}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={[styles.routeTypeInfo, { color: colors.subText }]}>
+                          {optimizedRouteInfo.duration} • {optimizedRouteInfo.distance}
+                        </Text>
+                        <View style={styles.safetyScoreContainer}>
+                          <View style={[
+                            styles.safetyScoreBar,
+                            { 
+                              width: `${optimizedRouteInfo.safetyScore}%`,
+                              backgroundColor: optimizedRouteInfo.safetyScore >= 80 ? '#00E676' : 
+                                             optimizedRouteInfo.safetyScore >= 50 ? '#FFA726' : '#FF4444'
+                            }
+                          ]} />
+                        </View>
+                        <Text style={[styles.safetyScoreText, { color: colors.subText }]}>
+                          Sécurité: {optimizedRouteInfo.safetyScore}%
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Toggle pour afficher/masquer les deux itinéraires */}
+                    <TouchableOpacity
+                      style={styles.showBothRoutesBtn}
+                      onPress={() => setShowBothRoutes(!showBothRoutes)}
+                    >
+                      <Ionicons 
+                        name={showBothRoutes ? 'eye' : 'eye-off'} 
+                        size={18} 
+                        color={colors.accent} 
+                      />
+                      <Text style={[styles.showBothRoutesText, { color: colors.accent }]}>
+                        {showBothRoutes ? 'Masquer l\'autre' : 'Afficher les deux'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {routeInfo && (
                   <View style={[styles.routeInfoCard, { backgroundColor: colors.card }]}>
                     <View style={styles.routeInfoRow}>
@@ -1265,6 +1500,166 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Nouvelle barre de résultats d'itinéraire en bas */}
+      {showRouteResultsBar && routeCoordinates.length > 0 && (
+        <View style={[styles.routeResultsBar, { backgroundColor: colors.card }]}>
+          <TouchableOpacity
+            style={styles.closeResultsBarBtn}
+            onPress={() => {
+              setShowRouteResultsBar(false);
+              clearRoute();
+            }}
+          >
+            <Ionicons name="close" size={20} color={colors.text} />
+          </TouchableOpacity>
+
+          {/* Sélecteur de type d'itinéraire EN HAUT */}
+          {normalRouteInfo && optimizedRouteInfo && (
+            <View style={styles.routeTypeToggle}>
+              <TouchableOpacity
+                style={[
+                  styles.routeTypeToggleBtn,
+                  selectedRouteType === 'normal' && { 
+                    backgroundColor: '#4285F420',
+                    borderColor: '#4285F4',
+                  }
+                ]}
+                onPress={() => {
+                  setSelectedRouteType('normal');
+                  const modeData = allModesRouteInfo[travelMode];
+                  setRouteCoordinates(modeData.coordinates);
+                  setRouteInfo(modeData.normal);
+                }}
+              >
+                <Ionicons 
+                  name="flash" 
+                  size={16} 
+                  color={selectedRouteType === 'normal' ? '#4285F4' : colors.subText} 
+                />
+                <Text style={[
+                  styles.routeTypeToggleText,
+                  { color: selectedRouteType === 'normal' ? '#4285F4' : colors.subText }
+                ]}>
+                  Rapide
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.routeTypeToggleBtn,
+                  selectedRouteType === 'optimized' && { 
+                    backgroundColor: '#00E67620',
+                    borderColor: '#00E676',
+                  }
+                ]}
+                onPress={() => {
+                  setSelectedRouteType('optimized');
+                  const modeData = allModesRouteInfo[travelMode];
+                  setRouteCoordinates(modeData.optimizedCoordinates);
+                  setRouteInfo(modeData.optimized);
+                }}
+              >
+                <Ionicons 
+                  name="shield-checkmark" 
+                  size={16} 
+                  color={selectedRouteType === 'optimized' ? '#00E676' : colors.subText} 
+                />
+                <Text style={[
+                  styles.routeTypeToggleText,
+                  { color: selectedRouteType === 'optimized' ? '#00E676' : colors.subText }
+                ]}>
+                  Sécurisé
+                </Text>
+                {allModesRouteInfo[travelMode]?.optimized?.obstaclesAvoided > 0 && (
+                  <View style={styles.obstaclesBadgeSmall}>
+                    <Text style={styles.obstaclesBadgeSmallText}>
+                      {allModesRouteInfo[travelMode].optimized.obstaclesAvoided}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Afficher le warning s'il y en a un */}
+          {optimizedRouteInfo?.warning && selectedRouteType === 'optimized' && (
+            <View style={[styles.warningBanner, { 
+              backgroundColor: optimizedRouteInfo.warning.includes('✓') ? '#00E67615' : '#FFA72615',
+              borderColor: optimizedRouteInfo.warning.includes('✓') ? '#00E676' : '#FFA726'
+            }]}>
+              <Ionicons 
+                name={optimizedRouteInfo.warning.includes('✓') ? 'checkmark-circle' : 'alert-circle'} 
+                size={16} 
+                color={optimizedRouteInfo.warning.includes('✓') ? '#00E676' : '#FFA726'} 
+              />
+              <Text style={[styles.warningText, { 
+                color: optimizedRouteInfo.warning.includes('✓') ? '#00E676' : '#FFA726'
+              }]}>
+                {optimizedRouteInfo.warning}
+              </Text>
+            </View>
+          )}
+
+          {/* Modes de transport avec TOUS les temps */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.travelModesScroll}>
+            {travelModes.map((mode) => {
+              const modeData = allModesRouteInfo[mode.mode];
+              const modeInfo = modeData 
+                ? (selectedRouteType === 'normal' ? modeData.normal : modeData.optimized)
+                : null;
+              
+              return (
+                <TouchableOpacity
+                  key={mode.mode}
+                  style={[
+                    styles.travelModeResultCard,
+                    { 
+                      backgroundColor: travelMode === mode.mode ? mode.color + '20' : 'transparent',
+                      borderColor: travelMode === mode.mode ? mode.color : colors.border,
+                    }
+                  ]}
+                  onPress={() => {
+                    setTravelMode(mode.mode);
+                    // Mettre à jour les coordonnées pour le nouveau mode
+                    if (modeData) {
+                      if (selectedRouteType === 'normal') {
+                        setRouteCoordinates(modeData.coordinates);
+                        setRouteInfo(modeData.normal);
+                      } else {
+                        setRouteCoordinates(modeData.optimizedCoordinates);
+                        setRouteInfo(modeData.optimized);
+                      }
+                    }
+                  }}
+                >
+                  <Ionicons 
+                    name={mode.icon} 
+                    size={24} 
+                    color={travelMode === mode.mode ? mode.color : colors.subText} 
+                  />
+                  <View style={styles.travelModeResultInfo}>
+                    <Text style={[
+                      styles.travelModeResultLabel, 
+                      { color: travelMode === mode.mode ? mode.color : colors.text }
+                    ]}>
+                      {mode.label}
+                    </Text>
+                    {modeInfo && (
+                      <Text style={[styles.travelModeResultTime, { color: colors.subText }]}>
+                        {modeInfo.duration}
+                      </Text>
+                    )}
+                    {!modeInfo && (
+                      <ActivityIndicator size="small" color={colors.subText} />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
     </View>
   );
 }
@@ -1291,17 +1686,17 @@ const styles = StyleSheet.create({
   routeBtnText: { fontSize: 16, fontWeight: '600' },
   routeMenuContainer: {
     position: 'absolute',
-    bottom: 0,
+    top: 0,
     left: 0,
     right: 0,
+    paddingTop: 60,
     paddingBottom: 20,
     paddingHorizontal: 20,
-    paddingTop: 5,
     zIndex: 10,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 10,
@@ -1643,4 +2038,205 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   closeDetailBtnText: { fontSize: 17, fontWeight: 'bold' },
+  // Styles pour les marqueurs de trafic
+  trafficMarker: {
+    width: 35,
+    height: 35,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FF1744',
+    elevation: 3,
+    shadowColor: '#FF1744',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+  },
+  trafficPulse: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 23, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 23, 68, 0.3)',
+  },
+  // Styles pour le sélecteur de type d'itinéraire
+  routeTypeSelectorContainer: {
+    padding: 15,
+    borderRadius: 15,
+    marginTop: 15,
+    gap: 12,
+  },
+  routeTypeSelectorTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  routeTypeBtns: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  routeTypeBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  routeTypeBtnHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  routeTypeBtnTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  routeTypeInfo: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  obstaclesBadge: {
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: 'auto',
+  },
+  obstaclesBadgeText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  safetyScoreContainer: {
+    height: 4,
+    backgroundColor: 'rgba(128, 128, 128, 0.2)',
+    borderRadius: 2,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  safetyScoreBar: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  safetyScoreText: {
+    fontSize: 10,
+    marginTop: 4,
+  },
+  showBothRoutesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  showBothRoutesText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  // Styles pour la barre de résultats d'itinéraire en bas
+  routeResultsBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 15,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    flexDirection: 'column',
+    gap: 12,
+  },
+  closeResultsBarBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(128, 128, 128, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  travelModesScroll: {
+    marginTop: 5,
+  },
+  travelModeResultCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    borderRadius: 12,
+    borderWidth: 2,
+    marginRight: 10,
+    minWidth: 130,
+  },
+  travelModeResultInfo: {
+    gap: 2,
+  },
+  travelModeResultLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  travelModeResultTime: {
+    fontSize: 12,
+  },
+  routeTypeToggle: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 5,
+  },
+  routeTypeToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  routeTypeToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  obstaclesBadgeSmall: {
+    backgroundColor: '#FF4444',
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 4,
+  },
+  obstaclesBadgeSmallText: {
+    color: 'white',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 5,
+  },
+  warningText: {
+    fontSize: 12,
+    flex: 1,
+    fontWeight: '500',
+  },
 });

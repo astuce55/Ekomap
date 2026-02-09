@@ -34,6 +34,11 @@ if (!fs.existsSync('public')) {
   fs.mkdirSync('public', { recursive: true });
 }
 
+// Créer le dossier traffic s'il n'existe pas
+if (!fs.existsSync('traffic')) {
+  fs.mkdirSync('traffic', { recursive: true });
+}
+
 // Configuration MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ekomap';
 
@@ -318,6 +323,76 @@ app.delete('/api/incidents/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Erreur lors de la suppression'
+    });
+  }
+});
+
+// GET /api/traffic - Récupérer l'état du trafic en temps réel
+app.get('/api/traffic', async (req, res) => {
+  try {
+    const trafficDir = path.join(__dirname, 'traffic');
+    
+    // Vérifier si le dossier existe
+    if (!fs.existsSync(trafficDir)) {
+      return res.json({
+        success: true,
+        data: [],
+        message: 'Aucune donnée de trafic disponible',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Lire tous les fichiers JSON du dossier traffic
+    const files = fs.readdirSync(trafficDir).filter(file => file.endsWith('.json'));
+    
+    const trafficData = [];
+    
+    for (const file of files) {
+      try {
+        const filePath = path.join(trafficDir, file);
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const data = JSON.parse(fileContent);
+        
+        // Extraire les coordonnées du nom du fichier
+        // Format attendu: "3.9295-11.6006.json"
+        const coords = file.replace('.json', '').split('-');
+        
+        if (coords.length === 2) {
+          const lat = parseFloat(coords[0]);
+          const lng = parseFloat(coords[1]);
+          
+          // Vérifier que les coordonnées sont valides
+          if (!isNaN(lat) && !isNaN(lng)) {
+            trafficData.push({
+              id: file.replace('.json', ''),
+              coordinates: { lat, lng },
+              statut: data.analyse?.statut || 'Inconnu',
+              vehicules_detectes: data.analyse?.vehicules_detectes || 0,
+              taux_immobilite: data.analyse?.taux_immobilite || 0,
+              alerte_active: data.analyse?.alerte_active || false,
+              projet: data.projet || 'N/A'
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Erreur lecture fichier ${file}:`, error);
+        // Continuer avec les autres fichiers même si un fichier est corrompu
+      }
+    }
+    
+    console.log(`📊 ${trafficData.length} points de trafic récupérés`);
+    
+    res.json({
+      success: true,
+      data: trafficData,
+      count: trafficData.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Erreur récupération trafic:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur serveur lors de la récupération des données de trafic'
     });
   }
 });

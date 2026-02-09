@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+// 1. AJOUT DE "Image" DANS LES IMPORTS
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'; 
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { useRouter } from 'expo-router'; // Import important
+import { useRouter } from 'expo-router'; 
 
 export default function LoginScreen() {
   const { colors, dark } = useTheme();
-  const router = useRouter(); // On initialise le router
+  const router = useRouter(); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -19,10 +20,15 @@ export default function LoginScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
     >
       <View style={styles.header}>
-        <View style={[styles.logoCircle, { backgroundColor: colors.accent }]}>
-          <MaterialCommunityIcons name="leaf" size={50} color="black" />
-        </View>
-        <Text style={[styles.title, { color: colors.text }]}>EkoMap</Text>
+        
+        {/* 2. REMPLACEMENT DE L'ICÔNE PAR VOTRE LOGO */}
+        {/* Assurez-vous que le chemin (../../assets/) correspond à votre structure de dossier */}
+        <Image 
+          source={require('../../assets/images/LOGO-1.png')} 
+          style={styles.logo}
+        />
+
+        <Text style={[styles.title, { color: colors.text }]}>EkoMapa</Text>
         <Text style={[styles.subtitle, { color: colors.subText }]}>L'IA au service de votre trajet</Text>
       </View>
 
@@ -57,14 +63,14 @@ export default function LoginScreen() {
 
         <TouchableOpacity 
           style={[styles.loginBtn, { backgroundColor: colors.accent }]}
-          onPress={() => router.replace('/(tabs)/home')} // Connexion simulée
+          onPress={() => router.replace('/(tabs)/home')} 
         >
           <Text style={styles.loginBtnText}>SE CONNECTER</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.guestBtn}
-          onPress={() => router.replace('/(tabs)/home')} // Mode invité
+          onPress={() => router.replace('/(tabs)/home')} 
         >
           <Text style={[styles.guestBtnText, { color: colors.accent }]}>Continuer en tant qu'invité</Text>
         </TouchableOpacity>
@@ -80,11 +86,18 @@ export default function LoginScreen() {
   );
 }
 
-
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 30, justifyContent: 'center' },
   header: { alignItems: 'center', marginBottom: 50 },
-  logoCircle: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
+  
+  // 3. NOUVEAU STYLE POUR L'IMAGE (remplace logoCircle)
+  logo: { 
+    width: 120,      // Ajustez la taille selon votre logo
+    height: 120, 
+    marginBottom: 15,
+    resizeMode: 'contain' // Garde les proportions de l'image
+  },
+
   title: { fontSize: 32, fontWeight: '900', letterSpacing: 1 },
   subtitle: { fontSize: 14, marginTop: 5 },
   form: { width: '100%' },

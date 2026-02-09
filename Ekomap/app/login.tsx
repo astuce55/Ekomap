@@ -8,7 +8,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Image
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../src/context/ThemeContext';
@@ -84,9 +85,10 @@ export default function LoginScreen() {
 
       {/* En-tête avec logo */}
       <View style={styles.header}>
-        <View style={[styles.logoCircle, { backgroundColor: colors.accent }]}>
-          <MaterialCommunityIcons name="leaf" size={50} color="black" />
-        </View>
+        <Image 
+          source={require('../assets/images/LOGO-2.png')} 
+          style={styles.logo}
+        />
         <Text style={[styles.title, { color: colors.text }]}>EkoMap</Text>
         <Text style={[styles.subtitle, { color: colors.subText }]}>
           {t('subtitle')}
