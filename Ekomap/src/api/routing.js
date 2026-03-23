@@ -1,6 +1,6 @@
 // src/api/routing.js
 // Service de calcul d'itinéraires : normal et optimisé
-// Version améliorée utilisant les routes alternatives d'OSRM
+// Version améliorée avec waypoints de contournement
 
 // Vitesses moyennes réelles (km/h)
 const SPEEDS = {
@@ -31,7 +31,7 @@ export const calculateNormalRoute = async (startPoint, endPoint, mode = 'driving
       longitude: coord[0],
     }));
 
-    // Calculer le temps basé sur la distance et la vitesse du mode
+    // Calculer le temps basé sur la distance réelle de la route et la vitesse du mode
     const distanceKm = route.distance / 1000;
     const speed = SPEEDS[mode] || SPEEDS.driving;
     const durationSeconds = (distanceKm / speed) * 3600;
@@ -50,8 +50,11 @@ export const calculateNormalRoute = async (startPoint, endPoint, mode = 'driving
 };
 
 /**
- * Calcule un itinéraire optimisé en utilisant les ROUTES ALTERNATIVES d'OSRM
- * Cette approche est plus fiable car elle utilise de vraies routes existantes
+ * Calcule un itinéraire optimisé qui évite les obstacles
+ * Stratégie en 3 étapes:
+ * 1. Essayer les routes alternatives d'OSRM
+ * 2. Si toutes passent par des obstacles, générer des waypoints de contournement
+ * 3. Calculer un itinéraire avec ces waypoints
  */
 export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = [], trafficData = [], mode = 'driving') => {
   try {
@@ -87,25 +90,29 @@ export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = 
       };
     }
 
-    // 2. Demander plusieurs routes alternatives à OSRM
+    // 2. ÉTAPE 1: Essayer les routes alternatives d'OSRM
     const osrmMode = mode === 'driving' ? 'car' : mode === 'bicycling' ? 'bike' : 'foot';
     
-    // CORRECTION ICI : On demande explicitement 3 alternatives (chiffre stable pour le serveur démo)
-    // On retire la duplication "&alternatives=true" qui causait l'erreur
-    const url = `https://router.project-osrm.org/route/v1/${osrmMode}/${startPoint.longitude},${startPoint.latitude};${endPoint.longitude},${endPoint.latitude}?overview=full&geometries=geojson&steps=true&alternatives=3`;
+    let alternativesUrl = `https://router.project-osrm.org/route/v1/${osrmMode}/${startPoint.longitude},${startPoint.latitude};${endPoint.longitude},${endPoint.latitude}?overview=full&geometries=geojson&steps=true&alternatives=3`;
 
-    console.log(`🌍 Appel OSRM Optimisé : ${url}`);
+    console.log(`🌍 Recherche de routes alternatives...`);
 
-    const response = await fetch(url);
-    const data = await response.json();
+    let response = await fetch(alternativesUrl);
+    let data = await response.json();
 
-    // Vérification plus stricte et log de l'erreur réelle
     if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
-      console.error('⚠️ Réponse OSRM:', data);
-      throw new Error(data.message || `Erreur OSRM: ${data.code}`);
+      console.warn('⚠️ Échec récupération routes alternatives, fallback sur route normale');
+      const normalRoute = await calculateNormalRoute(startPoint, endPoint, mode);
+      return {
+        ...normalRoute,
+        type: 'optimized',
+        obstaclesAvoided: 0,
+        safetyScore: 50,
+        warning: '⚠️ Impossible de trouver une route alternative'
+      };
     }
 
-    console.log(`📍 ${data.routes.length} route(s) trouvée(s) par OSRM`);
+    console.log(`📍 ${data.routes.length} route(s) trouvée(s)`);
 
     // 3. Analyser chaque route alternative
     const analyzedRoutes = data.routes.map((route, index) => {
@@ -114,13 +121,10 @@ export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = 
         longitude: coord[0],
       }));
 
-      // Compter les obstacles sur cette route
       const obstaclesOnRoute = findObstaclesOnRoute(coordinates, obstacles);
-      
-      // Calculer le score de sécurité
       const safetyScore = calculateSafetyScore(coordinates, obstacles);
 
-      // Calculer le temps basé sur la distance et la vitesse
+      // Calculer le temps basé sur la distance réelle et la vitesse
       const distanceKm = route.distance / 1000;
       const speed = SPEEDS[mode] || SPEEDS.driving;
       const durationSeconds = (distanceKm / speed) * 3600;
@@ -136,13 +140,13 @@ export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = 
       };
     });
 
-    // Afficher l'analyse dans la console
-    console.log(`📊 Analyse des routes :`);
+    // Afficher l'analyse
+    console.log(`📊 Analyse des routes alternatives :`);
     analyzedRoutes.forEach((r, i) => {
-      console.log(`  Route ${i + 1}: ${r.obstaclesCount} obstacle(s), sécurité ${r.safetyScore}%, ${formatDistance(r.distance)}`);
+      console.log(`  Route ${i + 1}: ${r.obstaclesCount} obstacle(s), sécurité ${r.safetyScore}%, ${formatDistance(r.distance)}, ${formatDuration(r.duration)}`);
     });
 
-    // 4. Trier les routes par sécurité d'abord, puis par distance
+    // 4. Trouver la meilleure route
     const sortedRoutes = [...analyzedRoutes].sort((a, b) => {
       // Priorité 1 : Moins d'obstacles
       if (a.obstaclesCount !== b.obstaclesCount) {
@@ -156,33 +160,102 @@ export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = 
       return a.distance - b.distance;
     });
 
-    // 5. Sélectionner la meilleure route
-    const bestRoute = sortedRoutes[0];
-    const normalRoute = analyzedRoutes[0]; // La première route OSRM est toujours la plus rapide par défaut
+    const bestAlternativeRoute = sortedRoutes[0];
+    const normalRoute = analyzedRoutes[0]; // La route normale est toujours la première
 
-    // 6. Générer un avertissement si nécessaire
-    let warning = null;
-    if (bestRoute.obstaclesCount > 0) {
-      if (bestRoute.obstaclesCount === normalRoute.obstaclesCount && sortedRoutes.every(r => r.obstaclesCount === normalRoute.obstaclesCount)) {
-        // Toutes les routes passent par le même nombre d'obstacles
-        warning = `⚠️ ${bestRoute.obstaclesCount} obstacle(s) sur le trajet. Aucune route alternative disponible pour les éviter.`;
-      } else if (bestRoute.obstaclesCount < normalRoute.obstaclesCount) {
-        // On a trouvé une meilleure route
-        const avoided = normalRoute.obstaclesCount - bestRoute.obstaclesCount;
-        warning = `✓ ${avoided} obstacle(s) évité(s) via route alternative, mais ${bestRoute.obstaclesCount} reste(nt) sur le trajet.`;
+    // 5. ÉTAPE 2: Si la meilleure route a encore trop d'obstacles, essayer avec waypoints
+    const ACCEPTABLE_OBSTACLES = 0; // On veut vraiment éviter tous les obstacles
+    
+    if (bestAlternativeRoute.obstaclesCount > ACCEPTABLE_OBSTACLES) {
+      console.log(`⚠️ Meilleure route alternative a ${bestAlternativeRoute.obstaclesCount} obstacle(s)`);
+      console.log(`🔄 Tentative de contournement avec waypoints...`);
+
+      // Générer des waypoints de contournement
+      const avoidanceWaypoints = generateAvoidanceWaypoints(
+        startPoint,
+        endPoint,
+        obstacles,
+        bestAlternativeRoute.obstaclesOnRoute
+      );
+
+      if (avoidanceWaypoints.length > 0) {
+        console.log(`📍 ${avoidanceWaypoints.length} waypoint(s) de contournement généré(s)`);
+
+        // Construire l'URL avec les waypoints
+        const allPoints = [startPoint, ...avoidanceWaypoints, endPoint];
+        const pointsString = allPoints
+          .map(p => `${p.longitude},${p.latitude}`)
+          .join(';');
+
+        const waypointsUrl = `https://router.project-osrm.org/route/v1/${osrmMode}/${pointsString}?overview=full&geometries=geojson&steps=true`;
+
+        try {
+          const wpResponse = await fetch(waypointsUrl);
+          const wpData = await wpResponse.json();
+
+          if (wpData.code === 'Ok' && wpData.routes && wpData.routes.length > 0) {
+            const wpRoute = wpData.routes[0];
+            const wpCoordinates = wpRoute.geometry.coordinates.map(coord => ({
+              latitude: coord[1],
+              longitude: coord[0],
+            }));
+
+            const wpObstacles = findObstaclesOnRoute(wpCoordinates, obstacles);
+            const wpSafetyScore = calculateSafetyScore(wpCoordinates, obstacles);
+
+            // Calculer le temps pour cette route avec waypoints
+            const wpDistanceKm = wpRoute.distance / 1000;
+            const speed = SPEEDS[mode] || SPEEDS.driving;
+            const wpDurationSeconds = (wpDistanceKm / speed) * 3600;
+
+            console.log(`✅ Route avec waypoints: ${wpObstacles.length} obstacle(s), sécurité ${wpSafetyScore}%, ${formatDistance(wpRoute.distance)}, ${formatDuration(wpDurationSeconds)}`);
+
+            // Si la route avec waypoints est meilleure, l'utiliser
+            if (wpObstacles.length < bestAlternativeRoute.obstaclesCount || wpSafetyScore > bestAlternativeRoute.safetyScore + 10) {
+              console.log(`🎯 Route avec waypoints sélectionnée (meilleure)`);
+              
+              return {
+                coordinates: wpCoordinates,
+                distance: wpRoute.distance,
+                duration: wpDurationSeconds,
+                type: 'optimized',
+                obstaclesAvoided: Math.max(0, normalRoute.obstaclesCount - wpObstacles.length),
+                safetyScore: wpSafetyScore,
+                warning: wpObstacles.length > 0 
+                  ? `⚠️ ${wpObstacles.length} obstacle(s) sur le trajet (impossible d'éviter complètement)`
+                  : null,
+                steps: []
+              };
+            }
+          }
+        } catch (waypointError) {
+          console.warn('⚠️ Erreur avec waypoints, utilisation de la meilleure alternative');
+        }
       }
     }
 
-    console.log(`✅ Meilleure route : Route ${bestRoute.index + 1}`);
+    // 6. Retourner la meilleure route trouvée
+    console.log(`✅ Meilleure route : Route ${bestAlternativeRoute.index + 1}`);
+
+    let warning = null;
+    if (bestAlternativeRoute.obstaclesCount > 0) {
+      if (bestAlternativeRoute.obstaclesCount < normalRoute.obstaclesCount) {
+        const avoided = normalRoute.obstaclesCount - bestAlternativeRoute.obstaclesCount;
+        warning = `✓ ${avoided} obstacle(s) évité(s), mais ${bestAlternativeRoute.obstaclesCount} reste(nt) sur le trajet`;
+      } else {
+        warning = `⚠️ ${bestAlternativeRoute.obstaclesCount} obstacle(s) sur le trajet (aucune route alternative sans obstacles)`;
+      }
+    }
+
     if (warning) console.log(warning);
 
     return {
-      coordinates: bestRoute.coordinates,
-      distance: bestRoute.distance,
-      duration: bestRoute.duration,
+      coordinates: bestAlternativeRoute.coordinates,
+      distance: bestAlternativeRoute.distance,
+      duration: bestAlternativeRoute.duration, // Temps réel calculé selon la distance
       type: 'optimized',
-      obstaclesAvoided: Math.max(0, normalRoute.obstaclesCount - bestRoute.obstaclesCount),
-      safetyScore: bestRoute.safetyScore,
+      obstaclesAvoided: Math.max(0, normalRoute.obstaclesCount - bestAlternativeRoute.obstaclesCount),
+      safetyScore: bestAlternativeRoute.safetyScore,
       warning,
       steps: []
     };
@@ -190,21 +263,76 @@ export const calculateOptimizedRoute = async (startPoint, endPoint, incidents = 
   } catch (error) {
     console.error('❌ Erreur calcul itinéraire optimisé:', error);
     
-    // Fallback sur l'itinéraire normal en cas d'échec
-    console.log('🔄 Tentative de bascule sur l\'itinéraire normal...');
+    // Fallback sur l'itinéraire normal
+    console.log('🔄 Fallback sur itinéraire normal...');
     try {
-        const normalRoute = await calculateNormalRoute(startPoint, endPoint, mode);
-        return {
+      const normalRoute = await calculateNormalRoute(startPoint, endPoint, mode);
+      return {
         ...normalRoute,
         type: 'optimized',
         obstaclesAvoided: 0,
         safetyScore: 50,
-        warning: '⚠️ Impossible de calculer une route alternative (Erreur serveur)'
-        };
+        warning: '⚠️ Erreur lors du calcul de la route optimisée'
+      };
     } catch (fallbackError) {
-        throw error; // Si même le normal échoue, on renvoie l'erreur
+      throw error;
     }
   }
+};
+
+/**
+ * Génère des waypoints pour contourner les obstacles
+ */
+const generateAvoidanceWaypoints = (startPoint, endPoint, allObstacles, obstaclesOnCurrentRoute) => {
+  const waypoints = [];
+  const DETOUR_DISTANCE = 0.008; // ~800m de détour
+
+  // Pour chaque obstacle sur la route actuelle
+  obstaclesOnCurrentRoute.forEach(obstacleOnRoute => {
+    const obstacle = allObstacles.find(o => 
+      o.lat === obstacleOnRoute.lat && o.lng === obstacleOnRoute.lng
+    );
+
+    if (!obstacle) return;
+
+    // Calculer le vecteur perpendiculaire à la ligne départ-arrivée
+    const dx = endPoint.longitude - startPoint.longitude;
+    const dy = endPoint.latitude - startPoint.latitude;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    
+    if (length === 0) return;
+
+    // Vecteur perpendiculaire normalisé
+    const perpX = -dy / length;
+    const perpY = dx / length;
+
+    // Créer deux waypoints de chaque côté de l'obstacle
+    const detourFactor = DETOUR_DISTANCE * obstacle.severity;
+
+    const waypoint1 = {
+      latitude: obstacle.lat + perpY * detourFactor,
+      longitude: obstacle.lng + perpX * detourFactor
+    };
+
+    const waypoint2 = {
+      latitude: obstacle.lat - perpY * detourFactor,
+      longitude: obstacle.lng - perpX * detourFactor
+    };
+
+    // Choisir le waypoint qui est le plus éloigné de tous les autres obstacles
+    const dist1 = Math.min(...allObstacles.map(o => 
+      getDistance(waypoint1.latitude, waypoint1.longitude, o.lat, o.lng)
+    ));
+    const dist2 = Math.min(...allObstacles.map(o => 
+      getDistance(waypoint2.latitude, waypoint2.longitude, o.lat, o.lng)
+    ));
+
+    waypoints.push(dist1 > dist2 ? waypoint1 : waypoint2);
+  });
+
+  // Limiter le nombre de waypoints (OSRM a une limite)
+  const MAX_WAYPOINTS = 3;
+  return waypoints.slice(0, MAX_WAYPOINTS);
 };
 
 /**
@@ -305,7 +433,6 @@ const calculateSafetyScore = (routeCoordinates, obstacles) => {
   });
 
   const totalPoints = routeCoordinates.length;
-  // Ajustement pour éviter les scores négatifs ou absurdes
   const dangerRatio = dangerPoints / (totalPoints * 3);
   const score = Math.max(0, Math.min(100, 100 - (dangerRatio * 100)));
 

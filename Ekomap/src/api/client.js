@@ -10,7 +10,7 @@ const USE_MOCK_API = false;
 // - Windows: ouvrez CMD et tapez "ipconfig", cherchez "IPv4 Address"
 // - Mac/Linux: ouvrez Terminal et tapez "ifconfig" ou "ip addr", cherchez "inet"
 // - L'IP ressemble généralement à 192.168.x.x ou 10.0.x.x
-const BACKEND_IP = '10.70.247.157'; // ⚠️ REMPLACEZ PAR VOTRE IP
+const BACKEND_IP = '192.168.1.112'; // ⚠️ REMPLACEZ PAR VOTRE IP
 
 // Configuration de l'API
 const apiClient = axios.create({

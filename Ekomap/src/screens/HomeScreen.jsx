@@ -149,7 +149,6 @@ export default function HomeScreen() {
   // Types d'incidents
   const incidentTypes = [
     { type: 'accident', icon: 'car', label: t('accident'), color: '#FF4444', requiresPhoto: true },
-    { type: 'controle', icon: 'shield-checkmark', label: t('control'), color: '#FFA726', requiresPhoto: false },
     { type: 'danger', icon: 'warning', label: t('risk'), color: '#FF9800', requiresPhoto: true },
     { type: 'travaux', icon: 'construct', label: t('works'), color: '#FFD700', requiresPhoto: true },
   ];
@@ -735,7 +734,7 @@ export default function HomeScreen() {
                   onPress={() => selectIncidentType(incident)}
                 >
                   <View style={[styles.incidentIcon, { backgroundColor: incident.color }]}>
-                    <Ionicons name={incident.icon} size={40} color="white" />
+                    <Ionicons name={incident.icon} size={30} color="white" />
                   </View>
                   <Text style={[styles.incidentLabel, { color: colors.text }]}>
                     {incident.label}
@@ -955,7 +954,7 @@ export default function HomeScreen() {
               >
                 <Ionicons
                   name={incidentType?.icon || 'alert-circle'}
-                  size={isEditing ? 28 : 22}
+                  size={isEditing ? 32 : 22}
                   color="white"
                 />
               </View>
@@ -1931,9 +1930,9 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modalTitle: { fontSize: 18, fontWeight: 'bold', flex: 1, textAlign: 'center', marginHorizontal: 10 },
-  incidentTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15, justifyContent: 'space-between' },
+  incidentTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' },
   incidentTypeCard: {
-    width: '47%',
+    width: '31%',
     aspectRatio: 1,
     borderRadius: 20,
     padding: 15,
