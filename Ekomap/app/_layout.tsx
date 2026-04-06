@@ -2,6 +2,9 @@ import { Stack } from 'expo-router';
 import { ThemeProvider } from '../src/context/ThemeContext';
 import { LanguageProvider } from '../src/context/LanguageContext';
 import { AuthProvider } from '../src/context/AuthContext';
+import { enableScreens } from 'react-native-screens';
+
+enableScreens(true);
 
 export default function RootLayout() {
   return (

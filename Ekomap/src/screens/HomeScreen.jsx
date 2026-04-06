@@ -94,6 +94,7 @@ export default function HomeScreen() {
     latitudeDelta: 0.01,
     longitudeDelta: 0.01,
   });
+  const [mapReady, setMapReady] = useState(false);
 
   // États des incidents
   const [incidents, setIncidents] = useState([]);
@@ -215,20 +216,39 @@ export default function HomeScreen() {
   // Permissions de localisation
   useEffect(() => {
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission refusée', 'La localisation est nécessaire');
-        return;
+      try {
+        console.log('📍 Demande de permission de localisation...');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          console.warn('⚠️ Permission de localisation refusée');
+          Alert.alert('Permission refusée', 'La localisation est nécessaire');
+          return;
+        }
+        
+        console.log('✅ Permission accordée, récupération de la position...');
+        const currentLocation = await Location.getCurrentPositionAsync({});
+        console.log('✅ Position obtenue:', currentLocation.coords.latitude, currentLocation.coords.longitude);
+        
+        setLocation(currentLocation);
+        setRegion({
+          latitude: currentLocation.coords.latitude,
+          longitude: currentLocation.coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
+        
+        console.log('✅ Carte initialisée avec succès');
+      } catch (error) {
+        console.error('❌ Erreur lors de l\'initialisation de la carte:', error);
+        // Utiliser une position par défaut (Yaoundé) en cas d'erreur
+        console.log('🔄 Utilisation de la position par défaut (Yaoundé)');
+        setRegion({
+          latitude: 3.8480,
+          longitude: 11.5021,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
       }
-
-      const currentLocation = await Location.getCurrentPositionAsync({});
-      setLocation(currentLocation);
-      setRegion({
-        latitude: currentLocation.coords.latitude,
-        longitude: currentLocation.coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
     })();
   }, []);
 
@@ -582,7 +602,7 @@ export default function HomeScreen() {
           return;
         }
         result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images'],
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
           aspect: [4, 3],
           quality: 0.7,
@@ -594,7 +614,7 @@ export default function HomeScreen() {
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'],
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: true,
           aspect: [4, 3],
           quality: 0.7,
@@ -734,7 +754,7 @@ export default function HomeScreen() {
                   onPress={() => selectIncidentType(incident)}
                 >
                   <View style={[styles.incidentIcon, { backgroundColor: incident.color }]}>
-                    <Ionicons name={incident.icon} size={30} color="white" />
+                    <Ionicons name={incident.icon} size={28} color="white" />
                   </View>
                   <Text style={[styles.incidentLabel, { color: colors.text }]}>
                     {incident.label}
@@ -874,6 +894,10 @@ export default function HomeScreen() {
         customMapStyle={dark ? darkMapStyle : []}
         showsUserLocation
         showsMyLocationButton={false}
+        onMapReady={() => {
+          console.log('✅ Carte chargée et prête');
+          setMapReady(true);
+        }}
       >
         {/* Itinéraire normal (en gris semi-transparent si les deux sont affichés) */}
         {normalRouteCoordinates.length > 0 && showBothRoutes && (
@@ -954,7 +978,7 @@ export default function HomeScreen() {
               >
                 <Ionicons
                   name={incidentType?.icon || 'alert-circle'}
-                  size={isEditing ? 32 : 22}
+                  size={isEditing ? 28 : 22}
                   color="white"
                 />
               </View>
@@ -1920,22 +1944,22 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 25,
     borderTopRightRadius: 25,
     padding: 20,
-    minHeight: '60%',
-    maxHeight: '90%',
+    minHeight: '45%',
+    maxHeight: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 15,
   },
   modalTitle: { fontSize: 18, fontWeight: 'bold', flex: 1, textAlign: 'center', marginHorizontal: 10 },
   incidentTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' },
   incidentTypeCard: {
     width: '31%',
-    aspectRatio: 1,
+    aspectRatio: 0.95,
     borderRadius: 20,
-    padding: 15,
+    padding: 10,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 4,
@@ -1944,8 +1968,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
-  incidentIcon: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  incidentLabel: { fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+  incidentIcon: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
+  incidentLabel: { fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
   instructionCard: { flexDirection: 'row', padding: 15, borderRadius: 15, gap: 12, alignItems: 'center' },
   instructionText: { flex: 1, fontSize: 14, lineHeight: 20 },
   photoStep: { flex: 1 },
