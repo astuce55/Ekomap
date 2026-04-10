@@ -12,7 +12,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const { t } = useLanguage();
+  const { t, locale, setLocale } = useLanguage();
 
   return (
     <KeyboardAvoidingView 
@@ -28,8 +28,8 @@ export default function LoginScreen() {
           style={styles.logo}
         />
 
-        <Text style={[styles.title, { color: colors.text }]}>EkoMapa</Text>
-        <Text style={[styles.subtitle, { color: colors.subText }]}>L'IA au service de votre trajet</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('welcome').split(' ').slice(-1)[0]}</Text>
+        <Text style={[styles.subtitle, { color: colors.subText }]}>{t('subtitle')}</Text>
       </View>
 
       <View style={styles.form}>
@@ -38,7 +38,7 @@ export default function LoginScreen() {
           <Ionicons name="mail-outline" size={20} color={colors.subText} />
           <TextInput 
             style={[styles.input, { color: colors.text }]}
-            placeholder="Email"
+            placeholder={t('email')}
             placeholderTextColor={colors.subText}
             value={email}
             onChangeText={setEmail}
@@ -50,7 +50,7 @@ export default function LoginScreen() {
           <Ionicons name="lock-closed-outline" size={20} color={colors.subText} />
           <TextInput 
             style={[styles.input, { color: colors.text }]}
-            placeholder="Mot de passe"
+            placeholder={t('password')}
             placeholderTextColor={colors.subText}
             secureTextEntry={!showPassword}
             value={password}
@@ -65,23 +65,33 @@ export default function LoginScreen() {
           style={[styles.loginBtn, { backgroundColor: colors.accent }]}
           onPress={() => router.replace('/(tabs)/home')} 
         >
-          <Text style={styles.loginBtnText}>SE CONNECTER</Text>
+          <Text style={styles.loginBtnText}>{t('login')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.guestBtn}
           onPress={() => router.replace('/(tabs)/home')} 
         >
-          <Text style={[styles.guestBtnText, { color: colors.accent }]}>Continuer en tant qu'invité</Text>
+          <Text style={[styles.guestBtnText, { color: colors.accent }]}>{t('guest')}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.footer}>
-        <Text style={{ color: colors.subText }}>Nouveau ici ? </Text>
+        <Text style={{ color: colors.subText }}>{t('noAccount')} </Text>
         <TouchableOpacity onPress={() => router.push('/register')}>
-          <Text style={{ color: colors.accent, fontWeight: 'bold' }}>Créer un compte</Text>
+          <Text style={{ color: colors.accent, fontWeight: 'bold' }}>{t('createAccount')}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Bouton de changement de langue */}
+      <TouchableOpacity
+        style={styles.languageBtn}
+        onPress={() => setLocale(locale === 'en' ? 'fr' : 'en')}
+      >
+        <Text style={styles.languageBtnText}>
+          {locale === 'en' ? '🇬🇧 EN' : '🇫🇷 FR'}
+        </Text>
+      </TouchableOpacity>
     </KeyboardAvoidingView>
   );
 }
@@ -107,5 +117,18 @@ const styles = StyleSheet.create({
   loginBtnText: { color: 'black', fontWeight: 'bold', fontSize: 16 },
   guestBtn: { marginTop: 20, alignSelf: 'center' },
   guestBtnText: { fontWeight: 'bold', textDecorationLine: 'underline' },
-  footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 40 }
+  footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 40 },
+  languageBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    backgroundColor: 'rgba(128, 128, 128, 0.2)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  languageBtnText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
 });
