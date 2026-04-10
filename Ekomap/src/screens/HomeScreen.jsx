@@ -15,7 +15,7 @@ import {
   KeyboardAvoidingView,
   Keyboard,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -82,7 +82,7 @@ const searchPlacesPhoton = async (query, location = null) => {
 
 export default function HomeScreen() {
   const { colors, dark } = useTheme();
-  const { t } = useLanguage();
+  const { t, locale, setLocale } = useLanguage();
   const { user, isGuest } = useAuth();
   const router = useRouter();
 
@@ -889,7 +889,7 @@ export default function HomeScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={PROVIDER_DEFAULT}
+        provider={PROVIDER_GOOGLE}
         initialRegion={region}
         customMapStyle={dark ? darkMapStyle : []}
         showsUserLocation
@@ -1377,6 +1377,16 @@ export default function HomeScreen() {
         onPress={() => router.push('/settings')}
       >
         <Ionicons name="settings-outline" size={24} color={colors.text} />
+      </TouchableOpacity>
+
+      {/* Bouton de changement de langue */}
+      <TouchableOpacity
+        style={[styles.languageBtn, { backgroundColor: colors.card }]}
+        onPress={() => setLocale(locale === 'en' ? 'fr' : 'en')}
+      >
+        <Text style={[styles.languageBtnText, { color: colors.text }]}>
+          {locale === 'en' ? '🇬🇧' : '🇫🇷'}
+        </Text>
       </TouchableOpacity>
 
       {editingIncident && (
@@ -1916,6 +1926,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+  },
+  languageBtn: {
+    position: 'absolute',
+    top: 115,
+    right: 20,
+    width: 45,
+    height: 45,
+    borderRadius: 23,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  languageBtnText: {
+    fontSize: 20,
+    fontWeight: 'bold',
   },
   editBar: {
     position: 'absolute',

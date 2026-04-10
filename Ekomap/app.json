@@ -9,14 +9,22 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.xponentiel.ekomap",
+      "config": {
+        "googleMapsApiKey": "AIzaSyCQUA1xvsVSIqo6k32GAjhb4h5vVt7256o"
+      }
     },
     "android": {
+      "package": "com.votre-nom.ekomap",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "config": {
+        "googleMapsApiKey": "AIzaSyCQUA1xvsVSIqo6k32GAjhb4h5vVt7256o"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

@@ -31,7 +31,7 @@ export const ThemeProvider = ({ children }) => {
     background: dark ? '#121212' : '#FFFFFF',
     text: dark ? '#FFFFFF' : '#333333',
     subText: dark ? '#AAAAAA' : '#666666',
-    accent: '#00FF66', // Ton vert EkoMap
+    accent: '#1c983e', // Ton vert EkoMap
     card: dark ? '#1E1E1E' : '#F5F5F5',
   };
 
