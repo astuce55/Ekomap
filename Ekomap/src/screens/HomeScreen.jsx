@@ -15,7 +15,7 @@ import {
   KeyboardAvoidingView,
   Keyboard,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_DEFAULT, Callout, Polyline} from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -889,7 +889,7 @@ export default function HomeScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={PROVIDER_GOOGLE}
+        provider={PROVIDER_DEFAULT}
         initialRegion={region}
         customMapStyle={dark ? darkMapStyle : []}
         showsUserLocation

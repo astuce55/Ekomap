@@ -355,7 +355,7 @@ app.get('/api/traffic', async (req, res) => {
         
         // Extraire les coordonnées du nom du fichier
         // Format attendu: "3.9295-11.6006.json"
-        const coords = file.replace('.json', '').split('-');
+        const coords = file.replace('.json', '').split('_');
         
         if (coords.length === 2) {
           const lat = parseFloat(coords[0]);

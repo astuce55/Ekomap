@@ -1,0 +1,9 @@
+{
+    "projet": "Gestion Trafic Yaoundé - M1",
+    "analyse": {
+        "statut": "Embouteillage",
+        "vehicules_detectes": 12,
+        "taux_immobilite": 1.0,
+        "alerte_active": true
+    }
+}
