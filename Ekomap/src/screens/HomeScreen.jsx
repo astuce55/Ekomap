@@ -156,9 +156,9 @@ export default function HomeScreen() {
 
   // Modes de transport avec vitesses moyennes (km/h)
   const travelModes = [
-    { mode: 'driving', icon: 'car', label: 'Voiture', color: '#4285F4', avgSpeed: 30 },
-    { mode: 'walking', icon: 'walk', label: 'À pied', color: '#34A853', avgSpeed: 5 },
-    { mode: 'bicycling', icon: 'bicycle', label: 'Vélo', color: '#FBBC04', avgSpeed: 15 },
+    { mode: 'driving', icon: 'car', label: t('car'), color: '#4285F4', avgSpeed: 30 },
+    { mode: 'walking', icon: 'walk', label: t('walking'), color: '#34A853', avgSpeed: 5 },
+    { mode: 'bicycling', icon: 'bicycle', label: t('bike'), color: '#FBBC04', avgSpeed: 15 },
   ];
 
   // Style carte sombre amélioré avec plus de détails visibles
@@ -370,27 +370,27 @@ export default function HomeScreen() {
 
   const useMyLocation = (field) => {
     if (!location) {
-      Alert.alert('Erreur', 'Position non disponible');
+      Alert.alert(t('error'), t('locationUnavailable'));
       return;
     }
 
     const myLocationPoint = {
       id: 'my-location',
-      name: 'Ma position',
-      shortName: 'Ma position',
+      name: t('startPos'),
+      shortName: t('startPos'),
       latitude: location.coords.latitude,
       longitude: location.coords.longitude,
     };
 
     if (field === 'start') {
       setStartPoint(myLocationPoint);
-      setSearchQuery('Ma position');
+      setSearchQuery(t('startPos'));
       if (endPoint) {
         calculateRoute(myLocationPoint, endPoint, travelMode);
       }
     } else {
       setEndPoint(myLocationPoint);
-      setDestinationQuery('Ma position');
+      setDestinationQuery(t('startPos'));
       if (startPoint) {
         calculateRoute(startPoint, myLocationPoint, travelMode);
       }
@@ -496,7 +496,7 @@ export default function HomeScreen() {
       }
     } catch (error) {
       console.error('Erreur calcul itinéraire:', error);
-      Alert.alert('Erreur', 'Impossible de calculer l\'itinéraire');
+      Alert.alert(t('error'), t('routeNotFound'));
     } finally {
       setIsSearching(false);
     }
@@ -540,24 +540,24 @@ export default function HomeScreen() {
     if (mode === 'from-here' && location) {
       const myLocationPoint = {
         id: 'my-location',
-        name: 'Ma position',
-        shortName: 'Ma position',
+        name: t('startPos'),
+        shortName: t('startPos'),
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       };
       setStartPoint(myLocationPoint);
-      setSearchQuery('Ma position');
+      setSearchQuery(t('startPos'));
       setActiveSearchField('end');
     } else if (mode === 'to-here' && location) {
       const myLocationPoint = {
         id: 'my-location',
-        name: 'Ma position',
-        shortName: 'Ma position',
+        name: t('startPos'),
+        shortName: t('startPos'),
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
       };
       setEndPoint(myLocationPoint);
-      setDestinationQuery('Ma position');
+      setDestinationQuery(t('startPos'));
       setActiveSearchField('start');
     } else {
       setActiveSearchField('start');
@@ -572,11 +572,11 @@ export default function HomeScreen() {
       setReportStep('type');
     } else {
       Alert.alert(
-        'Connexion requise',
-        'Veuillez vous connecter pour signaler un incident',
+        t('loginRequired'),
+        t('loginToReport'),
         [
-          { text: 'Plus tard', style: 'cancel' },
-          { text: 'Se connecter', onPress: () => router.push('/login') }
+          { text: t('later'), style: 'cancel' },
+          { text: t('connect'), onPress: () => router.push('/login') }
         ]
       );
     }
@@ -598,7 +598,7 @@ export default function HomeScreen() {
       if (source === 'camera') {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission refusée', 'L\'accès à la caméra est nécessaire');
+          Alert.alert(t('permissionDenied'), t('cameraRequired'));
           return;
         }
         result = await ImagePicker.launchCameraAsync({
@@ -610,7 +610,7 @@ export default function HomeScreen() {
       } else {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission refusée', 'L\'accès à la galerie est nécessaire');
+          Alert.alert(t('permissionDenied'), t('galleryRequired'));
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({
@@ -627,18 +627,18 @@ export default function HomeScreen() {
       }
     } catch (error) {
       console.error('Erreur sélection image:', error);
-      Alert.alert('Erreur', 'Impossible de charger l\'image');
+      Alert.alert(t('error'), t('imageError'));
     }
   };
 
   const submitReport = async () => {
     if (!selectedIncidentType || !location) {
-      Alert.alert('Erreur', 'Veuillez compléter toutes les étapes');
+      Alert.alert(t('error'), t('completeAllSteps'));
       return;
     }
 
     if (selectedIncidentType.requiresPhoto && !photoUri) {
-      Alert.alert('Erreur', 'Une photo est requise pour ce type de signalement');
+      Alert.alert(t('error'), t('photoRequired'));
       return;
     }
 
@@ -659,8 +659,8 @@ export default function HomeScreen() {
 
       if (response.success) {
         Alert.alert(
-          'Succès',
-          'Votre signalement a été enregistré avec succès !',
+          t('success'),
+          t('reportSuccess'),
           [{ 
             text: 'OK', 
             onPress: () => {
@@ -670,10 +670,10 @@ export default function HomeScreen() {
           }]
         );
       } else {
-        Alert.alert('Erreur', response.error || 'Impossible d\'envoyer le signalement');
+        Alert.alert(t('error'), response.error || t('reportError'));
       }
     } catch (error) {
-      Alert.alert('Erreur', 'Une erreur est survenue');
+      Alert.alert(t('error'), t('generalError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -688,12 +688,12 @@ export default function HomeScreen() {
 
   const enableEditMode = (incident) => {
     if (!user && !isGuest) {
-      Alert.alert('Erreur', 'Vous devez être connecté');
+      Alert.alert(t('error'), t('mustBeLoggedIn'));
       return;
     }
 
     if (user && incident.user_id !== user.id) {
-      Alert.alert('Erreur', 'Vous ne pouvez modifier que vos propres incidents');
+      Alert.alert(t('error'), t('canOnlyEditOwn'));
       return;
     }
 
@@ -712,14 +712,14 @@ export default function HomeScreen() {
       );
 
       if (response.success) {
-        Alert.alert('Succès', 'Position mise à jour');
+        Alert.alert(t('success'), t('positionUpdated'));
         setEditingIncident(null);
         loadIncidents();
       } else {
-        Alert.alert('Erreur', 'Impossible de mettre à jour');
+        Alert.alert(t('error'), t('updateError'));
       }
     } catch (error) {
-      Alert.alert('Erreur', 'Une erreur est survenue');
+      Alert.alert(t('error'), t('generalError'));
     }
   };
 
@@ -744,7 +744,7 @@ export default function HomeScreen() {
         return (
           <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={[styles.instructionText, { color: colors.subText, marginBottom: 20 }]}>
-              Sélectionnez le type d'incident :
+              {t('selectType')}
             </Text>
             <View style={styles.incidentTypeGrid}>
               {incidentTypes.map((incident) => (
@@ -771,7 +771,7 @@ export default function HomeScreen() {
             <View style={[styles.instructionCard, { backgroundColor: colors.card }]}>
               <Ionicons name="camera" size={24} color={colors.accent} />
               <Text style={[styles.instructionText, { color: colors.text }]}>
-                Prenez une photo de l'incident
+                {t('takePhoto')}
               </Text>
             </View>
 
@@ -782,7 +782,7 @@ export default function HomeScreen() {
               >
                 <Ionicons name="camera" size={48} color={colors.accent} />
                 <Text style={[styles.photoBtnText, { color: colors.text }]}>
-                  Appareil photo
+                  {t('camera')}
                 </Text>
               </TouchableOpacity>
 
@@ -792,7 +792,7 @@ export default function HomeScreen() {
               >
                 <Ionicons name="images" size={48} color={colors.accent} />
                 <Text style={[styles.photoBtnText, { color: colors.text }]}>
-                  Galerie
+                  {t('gallery')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -821,7 +821,7 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.detailContent}>
                   <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                    Type d'incident
+                    {t('incidentType')}
                   </Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {selectedIncidentType?.label}
@@ -835,7 +835,7 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.detailContent}>
                   <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                    Position
+                    {t('position')}
                   </Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {location?.coords.latitude.toFixed(4)}, {location?.coords.longitude.toFixed(4)}
@@ -849,10 +849,10 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.detailContent}>
                   <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                    Date et heure
+                    {t('dateTime')}
                   </Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {new Date().toLocaleString('fr-FR')}
+                    {new Date().toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US')}
                   </Text>
                 </View>
               </View>
@@ -872,7 +872,7 @@ export default function HomeScreen() {
               ) : (
                 <>
                   <Ionicons name="checkmark-circle" size={24} color="black" />
-                  <Text style={styles.submitBtnText}>Envoyer</Text>
+                  <Text style={styles.submitBtnText}>{t('send')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1027,7 +1027,7 @@ export default function HomeScreen() {
           onPress={() => openRouteMenu(null)}
         >
           <Ionicons name="navigate" size={24} color={colors.accent} />
-          <Text style={[styles.routeBtnText, { color: colors.text }]}>Itinéraire</Text>
+          <Text style={[styles.routeBtnText, { color: colors.text }]}>{t('itinerary')}</Text>
         </TouchableOpacity>
       )}
 
@@ -1093,7 +1093,7 @@ export default function HomeScreen() {
                     <View style={[styles.routeInputDot, { backgroundColor: '#34A853' }]} />
                     <TextInput
                       style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                      placeholder="Point de départ"
+                      placeholder={t('origin')}
                       placeholderTextColor={colors.subText}
                       value={searchQuery}
                       onChangeText={(text) => {
@@ -1129,7 +1129,7 @@ export default function HomeScreen() {
                     <View style={[styles.routeInputDot, { backgroundColor: '#EA4335' }]} />
                     <TextInput
                       style={[styles.routeInput, { color: colors.text, backgroundColor: dark ? '#222' : '#F5F5F5' }]}
-                      placeholder="Destination"
+                      placeholder={t('destination')}
                       placeholderTextColor={colors.subText}
                       value={destinationQuery}
                       onChangeText={(text) => {
@@ -1160,7 +1160,7 @@ export default function HomeScreen() {
                   >
                     <Ionicons name="locate" size={20} color={colors.accent} />
                     <Text style={[styles.myLocationButtonText, { color: colors.accent }]}>
-                      Utiliser ma position
+                      {t('useMyLocation')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1223,7 +1223,7 @@ export default function HomeScreen() {
                 {normalRouteInfo && optimizedRouteInfo && (
                   <View style={[styles.routeTypeSelectorContainer, { backgroundColor: colors.card }]}>
                     <Text style={[styles.routeTypeSelectorTitle, { color: colors.subText }]}>
-                      Type d'itinéraire
+                      {t('routeType')}
                     </Text>
                     <View style={styles.routeTypeBtns}>
                       {/* Itinéraire Normal */}
@@ -1248,7 +1248,7 @@ export default function HomeScreen() {
                             styles.routeTypeBtnTitle,
                             { color: selectedRouteType === 'normal' ? '#4285F4' : colors.text }
                           ]}>
-                            Rapide
+                            {t('fastRoute')}
                           </Text>
                         </View>
                         <Text style={[styles.routeTypeInfo, { color: colors.subText }]}>
@@ -1278,7 +1278,7 @@ export default function HomeScreen() {
                             styles.routeTypeBtnTitle,
                             { color: selectedRouteType === 'optimized' ? '#00E676' : colors.text }
                           ]}>
-                            Sécurisé
+                            {t('safeRoute')}
                           </Text>
                           {optimizedRouteInfo.obstaclesAvoided > 0 && (
                             <View style={styles.obstaclesBadge}>
@@ -1302,7 +1302,7 @@ export default function HomeScreen() {
                           ]} />
                         </View>
                         <Text style={[styles.safetyScoreText, { color: colors.subText }]}>
-                          Sécurité: {optimizedRouteInfo.safetyScore}%
+                          {t('safety')}: {optimizedRouteInfo.safetyScore}%
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1318,7 +1318,7 @@ export default function HomeScreen() {
                         color={colors.accent} 
                       />
                       <Text style={[styles.showBothRoutesText, { color: colors.accent }]}>
-                        {showBothRoutes ? 'Masquer l\'autre' : 'Afficher les deux'}
+                        {showBothRoutes ? t('hideOther') : t('showBothRoutes')}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1392,20 +1392,20 @@ export default function HomeScreen() {
       {editingIncident && (
         <View style={[styles.editBar, { backgroundColor: colors.card }]}>
           <Text style={[styles.editBarText, { color: colors.text }]}>
-            Déplacez le marqueur
+            {t('moveMarker')}
           </Text>
           <View style={styles.editBarButtons}>
             <TouchableOpacity
               style={[styles.editBarBtn, { backgroundColor: '#FF4444' }]}
               onPress={cancelEdit}
             >
-              <Text style={styles.editBarBtnText}>Annuler</Text>
+              <Text style={styles.editBarBtnText}>{t('cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.editBarBtn, { backgroundColor: colors.accent }]}
               onPress={saveNewPosition}
             >
-              <Text style={styles.editBarBtnText}>Valider</Text>
+              <Text style={styles.editBarBtnText}>{t('validate')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1424,9 +1424,9 @@ export default function HomeScreen() {
                 <Ionicons name="arrow-back" size={28} color={colors.text} />
               </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {reportStep === 'type' && 'Nouveau signalement'}
-                {reportStep === 'photo' && 'Ajouter une photo'}
-                {reportStep === 'confirm' && 'Confirmation'}
+                {reportStep === 'type' && t('newReport')}
+                {reportStep === 'photo' && t('addPhoto')}
+                {reportStep === 'confirm' && t('confirmation')}
               </Text>
               <View style={{ width: 28 }} />
             </View>
@@ -1449,7 +1449,7 @@ export default function HomeScreen() {
                 <Ionicons name="close" size={28} color={colors.text} />
               </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                Détails
+                {t('details')}
               </Text>
               <View style={{ width: 28 }} />
             </View>
@@ -1474,10 +1474,10 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.detailContent}>
                     <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                      Type
+                      {t('incidentType')}
                     </Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {incidentTypes.find(t => t.type === selectedIncident?.type)?.label || 'Inconnu'}
+                      {incidentTypes.find(t => t.type === selectedIncident?.type)?.label || t('unknown')}
                     </Text>
                   </View>
                 </View>
@@ -1488,10 +1488,10 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.detailContent}>
                     <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                      Signalé le
+                      {t('reportedAt')}
                     </Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {selectedIncident && new Date(selectedIncident.reported_at).toLocaleString('fr-FR')}
+                      {selectedIncident && new Date(selectedIncident.reported_at).toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US')}
                     </Text>
                   </View>
                 </View>
@@ -1502,7 +1502,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.detailContent}>
                     <Text style={[styles.detailLabel, { color: colors.subText }]}>
-                      Coordonnées
+                      {t('coordinates')}
                     </Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>
                       {selectedIncident?.coordinates.lat.toFixed(4)}, {selectedIncident?.coordinates.lng.toFixed(4)}
@@ -1517,7 +1517,7 @@ export default function HomeScreen() {
                   onPress={() => enableEditMode(selectedIncident)}
                 >
                   <Ionicons name="move" size={20} color="black" />
-                  <Text style={styles.editPositionBtnText}>Modifier la position</Text>
+                  <Text style={styles.editPositionBtnText}>{t('editPosition')}</Text>
                 </TouchableOpacity>
               )}
 
@@ -1526,7 +1526,7 @@ export default function HomeScreen() {
                 onPress={() => setSelectedIncident(null)}
               >
                 <Text style={[styles.closeDetailBtnText, { color: colors.text }]}>
-                  Fermer
+                  {t('close')}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
@@ -1574,7 +1574,7 @@ export default function HomeScreen() {
                   styles.routeTypeToggleText,
                   { color: selectedRouteType === 'normal' ? '#4285F4' : colors.subText }
                 ]}>
-                  Rapide
+                  {t('fastRoute')}
                 </Text>
               </TouchableOpacity>
 
@@ -1602,7 +1602,7 @@ export default function HomeScreen() {
                   styles.routeTypeToggleText,
                   { color: selectedRouteType === 'optimized' ? '#00E676' : colors.subText }
                 ]}>
-                  Sécurisé
+                  {t('safeRoute')}
                 </Text>
                 {allModesRouteInfo[travelMode]?.optimized?.obstaclesAvoided > 0 && (
                   <View style={styles.obstaclesBadgeSmall}>
