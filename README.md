@@ -6,12 +6,12 @@
 
 ## 🌍 Contexte
 
-EkoMap est une application mobile de cartographie participative conçue pour améliorer la sécurité et la mobilité en permettant aux citoyens de signaler les incidents routiers en temps réel. L'application collecte des données sur les accidents, dangers, travaux et contrôles de police pour créer une cartographie dynamique des risques urbains.
+EkoMap est une application mobile de cartographie participative conçue pour améliorer la sécurité et la mobilité en permettant aux citoyens de signaler les incidents routiers en temps réel. L'application collecte des données sur les accidents, dangers, travaux pour créer une cartographie dynamique des risques urbains.
 
 ## ✨ Fonctionnalités Principales
 
 ### 🚨 Signalement d'Incidents
-- **4 types d'incidents** : Accidents, Contrôles de police, Dangers, Travaux
+- **4 types d'incidents** : Accidents, Dangers, Travaux
 - **Capture photo** intégrée avec caméra ou galerie
 - **Géolocalisation** automatique
 - **Mode invité** ou compte utilisateur
